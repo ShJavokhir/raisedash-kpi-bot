@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 class BotHandlers:
     """Handles all bot commands and callback queries."""
 
+    ROLE_PRIORITY = {
+        'Driver': 1,
+        'Dispatcher': 2,
+        'OpsManager': 3
+    }
+
     def __init__(self, db: Database,
                  platform_admin_ids: Optional[List[int]] = None,
                  bot_user_id: Optional[int] = None):
@@ -30,6 +36,33 @@ class BotHandlers:
         if user.username:
             return f"@{user.username}"
         return f"User_{user.id}"
+
+    def _role_rank(self, role: Optional[str]) -> int:
+        """Return numeric rank for a role (higher is more privileged)."""
+        if not role:
+            return 0
+        return self.ROLE_PRIORITY.get(role, 0)
+
+    def _ensure_user_role(self, user_id: int, desired_role: str,
+                          handle_hint: Optional[str] = None):
+        """
+        Persist the desired role only if it does not demote an existing record.
+        """
+        desired_rank = self._role_rank(desired_role)
+        if desired_rank == 0:
+            return
+
+        existing_user = self.db.get_user(user_id)
+        current_rank = self._role_rank(existing_user['team_role']) if existing_user else 0
+        if current_rank >= desired_rank:
+            return
+
+        handle = (
+            existing_user.get('telegram_handle')
+            if existing_user and existing_user.get('telegram_handle')
+            else handle_hint or f"User_{user_id}"
+        )
+        self.db.upsert_user(user_id, handle, desired_role)
 
     def set_bot_user_id(self, bot_user_id: int):
         """Persist the bot user's Telegram ID."""
@@ -45,6 +78,21 @@ class BotHandlers:
     def _is_platform_admin(self, user_id: Optional[int]) -> bool:
         """Return True if the user is a platform-level administrator."""
         return bool(user_id and user_id in self.platform_admin_ids)
+
+    @staticmethod
+    def _is_int_argument(value: Optional[str]) -> bool:
+        """Utility to test whether a string can be cast to int."""
+        if value is None:
+            return False
+        try:
+            int(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _is_platform_dispatcher_command(self, args: List[str]) -> bool:
+        """Detect the hidden /add_dispatcher <company_id> <user_id> format."""
+        return len(args) >= 2 and all(self._is_int_argument(arg) for arg in args[:2])
 
     def _log_audit_event(self, event: str, **payload: Any):
         """Log structured audit events for sensitive operations."""
@@ -341,13 +389,19 @@ class BotHandlers:
 
     async def add_dispatcher_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /add_dispatcher command."""
-        if not self._is_group_chat(update.effective_chat):
+        user = update.effective_user
+        chat = update.effective_chat
+
+        if self._is_platform_admin(user.id) and (
+            not chat or not self._is_group_chat(chat) or self._is_platform_dispatcher_command(context.args)
+        ):
+            await self._handle_platform_add_dispatcher(update, context)
+            return
+
+        if not chat or not self._is_group_chat(chat):
             await self._send_error_message(update, "This command only works in groups.")
             return
 
-        # Check if user is admin
-        user = update.effective_user
-        chat = update.effective_chat
         member = await context.bot.get_chat_member(chat.id, user.id)
 
         if member.status not in ['creator', 'administrator']:
@@ -419,6 +473,113 @@ class BotHandlers:
                 f"⚠️ Added {dispatcher_handle} to the dispatcher list.\n"
                 f"They will be fully registered when they interact with the bot."
             )
+
+    async def _handle_platform_add_dispatcher(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Hidden platform-admin command to attach a dispatcher to a company."""
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "Usage: /add_dispatcher <company_id> <dispatcher_user_id>"
+            )
+            return
+
+        try:
+            company_id = int(context.args[0])
+            dispatcher_user_id = int(context.args[1])
+        except ValueError:
+            await self._send_error_message(
+                update,
+                "company_id and dispatcher_user_id must be integers."
+            )
+            return
+
+        company = self.db.get_company_by_id(company_id)
+        if not company:
+            await self._send_error_message(update, f"Company {company_id} does not exist.")
+            return
+
+        already_configured = dispatcher_user_id in company.get('dispatcher_user_ids', [])
+        if not already_configured:
+            self.db.add_dispatcher_to_company(company_id, dispatcher_user_id)
+
+        self._ensure_user_role(dispatcher_user_id, 'Dispatcher')
+
+        if already_configured:
+            message = (
+                f"ℹ️ User {dispatcher_user_id} is already a dispatcher for {company['name']}."
+            )
+        else:
+            message = (
+                f"✅ Added dispatcher {dispatcher_user_id} to {company['name']}."
+            )
+
+        await update.message.reply_text(message)
+        self._log_audit_event(
+            "platform_add_dispatcher",
+            company_id=company_id,
+            dispatcher_user_id=dispatcher_user_id,
+            initiated_by=update.effective_user.id if update.effective_user else None,
+            no_change=already_configured
+        )
+
+    async def add_manager_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Hidden platform-admin command to attach a manager to a company."""
+        user = update.effective_user
+        if not self._is_platform_admin(user.id):
+            await self._send_error_message(update, "You are not authorized to use this command.")
+            return
+
+        if len(context.args) < 3:
+            await update.message.reply_text(
+                "Usage: /add_manager <company_id> <manager_user_id> <manager_handle>"
+            )
+            return
+
+        try:
+            company_id = int(context.args[0])
+            manager_user_id = int(context.args[1])
+        except ValueError:
+            await self._send_error_message(
+                update,
+                "company_id and manager_user_id must be integers."
+            )
+            return
+
+        manager_handle = " ".join(context.args[2:]).strip()
+        if not manager_handle:
+            await self._send_error_message(update, "manager_handle is required.")
+            return
+        if not manager_handle.startswith('@'):
+            manager_handle = f"@{manager_handle}"
+
+        company = self.db.get_company_by_id(company_id)
+        if not company:
+            await self._send_error_message(update, f"Company {company_id} does not exist.")
+            return
+
+        already_id = manager_user_id in company.get('manager_user_ids', [])
+        already_handle = manager_handle in company.get('manager_handles', [])
+
+        if not already_id or not already_handle:
+            self.db.add_manager_to_company(company_id, manager_user_id, manager_handle)
+            status_message = (
+                f"✅ Added manager {manager_handle} (ID {manager_user_id}) to {company['name']}."
+            )
+        else:
+            status_message = (
+                f"ℹ️ Manager {manager_handle} (ID {manager_user_id}) already configured for {company['name']}."
+            )
+
+        self._ensure_user_role(manager_user_id, 'OpsManager', manager_handle)
+
+        await update.message.reply_text(status_message)
+        self._log_audit_event(
+            "platform_add_manager",
+            company_id=company_id,
+            manager_user_id=manager_user_id,
+            manager_handle=manager_handle,
+            initiated_by=user.id,
+            no_change=already_id and already_handle
+        )
 
     async def add_group_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Platform-admin-only command to attach a group to a company."""
@@ -497,7 +658,7 @@ class BotHandlers:
         user = update.effective_user
         user_handle = self._get_user_handle(user)
 
-        self.db.upsert_user(user.id, user_handle, 'Driver')
+        self._ensure_user_role(user.id, 'Driver', user_handle)
 
         await update.message.reply_text(
             f"✅ You have been registered as a Driver!\n"
@@ -548,11 +709,6 @@ class BotHandlers:
             return
 
         user_handle = self._get_user_handle(user)
-
-        # Register user as driver if not already registered
-        existing_user = self.db.get_user(user.id)
-        if not existing_user:
-            self.db.upsert_user(user.id, user_handle, 'Driver')
 
         # Create incident in database (without message_id first)
         incident_id = self.db.create_incident(
@@ -641,25 +797,6 @@ class BotHandlers:
 
     async def _handle_claim_t1(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 1 claim button."""
-        group_info = membership['group']
-        company_info = membership.get('company')
-
-        # Auto-register user as dispatcher if they claim
-        existing_user = self.db.get_user(user.id)
-        if not existing_user:
-            user_handle = self._get_user_handle(user)
-            self.db.upsert_user(user.id, user_handle, 'Dispatcher')
-            if company_info:
-                self.db.add_dispatcher_to_company(company_info['company_id'], user.id)
-                self.db.attach_group_to_company(
-                    group_id=group_info['group_id'],
-                    group_name=group_info['group_name'],
-                    company_id=company_info['company_id'],
-                    status='active'
-                )
-            else:
-                self.db.add_dispatcher_to_group(chat.id, user.id)
-
         # Check if user is authorized dispatcher
         dispatcher_ids = self._collect_dispatcher_ids(membership)
         if user.id not in dispatcher_ids:
@@ -755,25 +892,7 @@ class BotHandlers:
 
     async def _handle_claim_t2(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 2 (Manager) claim button."""
-        group_info = membership['group']
-        company_info = membership.get('company')
-
-        # Auto-register user as manager if they claim
-        existing_user = self.db.get_user(user.id)
         user_handle = self._get_user_handle(user)
-
-        if not existing_user:
-            self.db.upsert_user(user.id, user_handle, 'OpsManager')
-            if company_info:
-                self.db.add_manager_to_company(company_info['company_id'], user.id, user_handle)
-                self.db.attach_group_to_company(
-                    group_id=group_info['group_id'],
-                    group_name=group_info['group_name'],
-                    company_id=company_info['company_id'],
-                    status='active'
-                )
-            else:
-                self.db.add_manager_to_group(chat.id, user.id, user_handle)
 
         # Check if user is authorized manager
         manager_ids = self._collect_manager_ids(membership)
