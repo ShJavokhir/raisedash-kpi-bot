@@ -37,8 +37,11 @@ class IncidentBot:
         Config.validate()
 
         # Initialize database
-        self.db = Database(Config.DATABASE_PATH)
-        logger.info(f"Database initialized at {Config.DATABASE_PATH}")
+        self.db = Database(
+            supabase_url=Config.SUPABASE_URL,
+            supabase_key=Config.SUPABASE_SERVICE_ROLE_KEY
+        )
+        logger.info("Database initialized with Supabase")
 
         # Build application
         self.application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()

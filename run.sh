@@ -19,6 +19,12 @@ if ! grep -q "^TELEGRAM_BOT_TOKEN=.\+" .env; then
     echo "Please edit .env and add your bot token from @BotFather"
     exit 1
 fi
+# Check Supabase credentials
+if ! grep -q "^SUPABASE_URL=.\+" .env || ! grep -q "^SUPABASE_SERVICE_ROLE_KEY=.\+" .env; then
+    echo "❌ Error: Supabase credentials missing in .env file!"
+    echo "Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for database access."
+    exit 1
+fi
 
 # Check if Python 3 is installed
 if ! command -v python3 &> /dev/null; then

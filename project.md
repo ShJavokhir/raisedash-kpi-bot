@@ -18,7 +18,7 @@ Enable logistics/operations teams to manage incidents efficiently with a two-tie
 - **Race Condition Protection**: Atomic database operations prevent multiple claims
 - **Per-Group Isolation**: Independent configurations per Telegram group
 - **Role-Based Access**: Driver, Dispatcher, OpsManager authorization
-- **Persistent Storage**: SQLite with WAL mode for concurrency
+- **Persistent Storage**: Supabase/PostgreSQL with normalized roles and multi-assignee support
 
 ### Automation
 - **SLA Reminders**: Background task monitors unclaimed incidents (10 min) and escalations (15 min)
@@ -38,7 +38,8 @@ Enable logistics/operations teams to manage incidents efficiently with a two-tie
 
 - **Python 3.8+** with asyncio
 - **python-telegram-bot v22.5** for Telegram API
-- **SQLite3** with WAL mode (production: recommend PostgreSQL)
+- **Supabase/PostgreSQL** for persistence (service role key only, no RLS reliance for bot process)
+- **supabase-py** client
 - **python-dotenv** for environment management
 
 ## Architecture
@@ -52,11 +53,16 @@ reminders.py           # SLA monitoring service
 config.py              # Configuration management
 ```
 
-## Database Schema
+## Database Schema (Supabase)
 
-- **Groups**: group_id, manager_user_ids, dispatcher_user_ids
-- **Users**: user_id, telegram_handle, team_role
-- **Incidents**: incident_id, status, timestamps, claimer IDs, descriptions
+- **companies**: id (uuid), name (unique), metadata
+- **groups**: id (telegram group), company_id (FK), status, registration/request metadata
+- **telegram_users**: id, handle/username, profile fields, global_role
+- **company_roles / group_roles**: normalized dispatcher/manager assignments (user_id or handle)
+- **incidents**: id (TKT-YYYY-NNNN via DB function), lifecycle fields, timestamps, metadata
+- **incident_assignments**: active participants per incident tier (supports multiple assignees)
+- **incident_events**: audit log of state changes
+- **incident_counters**: yearly ticket counter backing the ID generator
 
 ## Commands
 
@@ -69,7 +75,8 @@ config.py              # Configuration management
 ## Configuration (.env)
 
 - `TELEGRAM_BOT_TOKEN` - Bot token (required)
-- `DATABASE_PATH` - DB location (default: incidents.db)
+- `SUPABASE_URL` - Supabase project URL (required)
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (required for server-side writes)
 - `SLA_UNCLAIMED_NUDGE_MINUTES` - Unclaimed reminder (default: 10)
 - `SLA_ESCALATION_NUDGE_MINUTES` - Escalation reminder (default: 15)
 - `REMINDER_CHECK_INTERVAL_MINUTES` - Check frequency (default: 5)

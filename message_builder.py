@@ -10,11 +10,38 @@ class MessageBuilder:
     """Builds formatted messages and inline keyboards for incident states."""
 
     @staticmethod
+    def _assignment_handles(incident: Dict[str, Any], role: str) -> list[str]:
+        """Return ordered unique handles for a given role (tier1/tier2)."""
+        handles: list[str] = []
+        seen = set()
+        for assignment in incident.get('assignments', []) or []:
+            if assignment.get('role') != role:
+                continue
+            user = assignment.get('user') or {}
+            handle = user.get('handle') or user.get('username')
+            if handle and not handle.startswith('@'):
+                handle = f"@{handle}"
+            if not handle:
+                handle = f"User_{assignment.get('user_id')}"
+            if handle in seen:
+                continue
+            seen.add(handle)
+            handles.append(handle)
+        return handles
+
+    @staticmethod
+    def _format_owner_line(handles: list[str], label: str) -> str:
+        if not handles:
+            return f"{label}: (none)"
+        return f"{label}: {', '.join(handles)}"
+
+    @staticmethod
     def build_unclaimed_message(incident: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for unclaimed incident (State 1).
 
         Structured layout with dividers to improve readability.
         """
+        t1_handles = MessageBuilder._assignment_handles(incident, 'tier1')
         text = (
             "🚨 NEW INCIDENT\n"
             "------------------------------\n"
@@ -22,6 +49,7 @@ class MessageBuilder:
             f"Status: 🔥 UNCLAIMED\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
+            f"{MessageBuilder._format_owner_line(t1_handles, 'Dispatchers')}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
@@ -37,12 +65,16 @@ class MessageBuilder:
     @staticmethod
     def build_claimed_t1_message(incident: Dict[str, Any], claimer_handle: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for Tier 1 claimed incident (State 2)."""
+        t1_handles = MessageBuilder._assignment_handles(incident, 'tier1')
+        if claimer_handle and claimer_handle not in t1_handles:
+            t1_handles.append(claimer_handle)
+
         text = (
             "🚨 INCIDENT IN PROGRESS (Tier 1)\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Status: 🛠️ IN PROGRESS\n"
-            f"Owner: {claimer_handle}\n"
+            f"{MessageBuilder._format_owner_line(t1_handles, 'Dispatchers')}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
@@ -53,9 +85,10 @@ class MessageBuilder:
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("❌ Leave Claim", callback_data=f"release_t1:{incident['incident_id']}"),
-                InlineKeyboardButton("⬆️ Escalate", callback_data=f"escalate:{incident['incident_id']}")
+                InlineKeyboardButton("➕ Join", callback_data=f"claim_t1:{incident['incident_id']}"),
+                InlineKeyboardButton("❌ Leave", callback_data=f"release_t1:{incident['incident_id']}")
             ],
+            [InlineKeyboardButton("⬆️ Escalate", callback_data=f"escalate:{incident['incident_id']}")],
             [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t1:{incident['incident_id']}")]
         ])
 
@@ -64,6 +97,7 @@ class MessageBuilder:
     @staticmethod
     def build_escalated_message(incident: Dict[str, Any], escalated_by_handle: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for escalated incident (State 3)."""
+        t1_handles = MessageBuilder._assignment_handles(incident, 'tier1')
         text = (
             "🚨 INCIDENT ESCALATED\n"
             "------------------------------\n"
@@ -72,6 +106,7 @@ class MessageBuilder:
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             f"Previous owner: {escalated_by_handle}\n"
+            f"{MessageBuilder._format_owner_line(t1_handles, 'Dispatchers')}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
@@ -87,12 +122,16 @@ class MessageBuilder:
     @staticmethod
     def build_claimed_t2_message(incident: Dict[str, Any], claimer_handle: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for Tier 2 claimed incident (State 4)."""
+        t2_handles = MessageBuilder._assignment_handles(incident, 'tier2')
+        if claimer_handle and claimer_handle not in t2_handles:
+            t2_handles.append(claimer_handle)
+
         text = (
             "🚨 INCIDENT IN PROGRESS (Tier 2)\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Status: 🛠️ IN PROGRESS\n"
-            f"Owner: {claimer_handle} (Manager)\n"
+            f"{MessageBuilder._format_owner_line(t2_handles, 'Managers')}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
@@ -102,7 +141,10 @@ class MessageBuilder:
         )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t2:{incident['incident_id']}")]
+            [
+                InlineKeyboardButton("➕ Join", callback_data=f"claim_t2:{incident['incident_id']}"),
+                InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t2:{incident['incident_id']}")
+            ]
         ])
 
         return text, keyboard

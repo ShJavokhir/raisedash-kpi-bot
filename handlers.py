@@ -132,8 +132,11 @@ class BotHandlers:
             return False
 
     def _is_platform_dispatcher_command(self, args: List[str]) -> bool:
-        """Detect the hidden /add_dispatcher <company_id> <user_id> format."""
-        return len(args) >= 2 and all(self._is_int_argument(arg) for arg in args[:2])
+        """
+        Detect the hidden /add_dispatcher <company_id> <user_id> format.
+        Company IDs can be UUID strings; only the user_id must be int-ish.
+        """
+        return len(args) >= 2 and self._is_int_argument(args[1])
 
     def _log_audit_event(self, event: str, **payload: Any):
         """Log structured audit events for sensitive operations."""
@@ -218,6 +221,26 @@ class BotHandlers:
                     continue
                 seen.add(handle)
                 handles.append(handle)
+        return handles
+
+    @staticmethod
+    def _extract_handles_from_assignments(incident: Dict[str, Any], role: str) -> List[str]:
+        """Pull normalized handles from incident assignments for a given role."""
+        handles: List[str] = []
+        seen = set()
+        for assignment in incident.get('assignments', []) or []:
+            if assignment.get('role') != role:
+                continue
+            user = assignment.get('user') or {}
+            handle = user.get('handle') or user.get('username')
+            if handle and not handle.startswith('@'):
+                handle = f"@{handle}"
+            if not handle:
+                handle = f"User_{assignment.get('user_id')}"
+            if handle in seen:
+                continue
+            seen.add(handle)
+            handles.append(handle)
         return handles
 
     def _is_group_chat(self, chat: Chat) -> bool:
@@ -531,18 +554,16 @@ class BotHandlers:
         """Hidden platform-admin command to attach a dispatcher to a company."""
         if len(context.args) < 2:
             await update.message.reply_text(
-                "Usage: /add_dispatcher <company_id> <dispatcher_user_id>"
+                "Usage: /add_dispatcher <company_id> <dispatcher_user_id>\n"
+                "Example: /add_dispatcher bb56df4d-d90c-40cb-9f49-1ebe86bfe3d6 123456789"
             )
             return
 
+        company_id = context.args[0]
         try:
-            company_id = int(context.args[0])
             dispatcher_user_id = int(context.args[1])
         except ValueError:
-            await self._send_error_message(
-                update,
-                "company_id and dispatcher_user_id must be integers."
-            )
+            await self._send_error_message(update, "dispatcher_user_id must be an integer.")
             return
 
         company = self.db.get_company_by_id(company_id)
@@ -583,18 +604,16 @@ class BotHandlers:
 
         if len(context.args) < 3:
             await update.message.reply_text(
-                "Usage: /add_manager <company_id> <manager_user_id> <manager_handle>"
+                "Usage: /add_manager <company_id> <manager_user_id> <manager_handle>\n"
+                "Example: /add_manager bb56df4d-d90c-40cb-9f49-1ebe86bfe3d6 123456789 @alice"
             )
             return
 
+        company_id = context.args[0]
         try:
-            company_id = int(context.args[0])
             manager_user_id = int(context.args[1])
         except ValueError:
-            await self._send_error_message(
-                update,
-                "company_id and manager_user_id must be integers."
-            )
+            await self._send_error_message(update, "manager_user_id must be an integer.")
             return
 
         manager_handle = " ".join(context.args[2:]).strip()
@@ -644,17 +663,17 @@ class BotHandlers:
         if len(context.args) < 2:
             await update.message.reply_text(
                 "Usage: /add_group <company_id> <group_id>\n"
-                "Example: /add_group 1 -1001234567890"
+                "Example: /add_group bb56df4d-d90c-40cb-9f49-1ebe86bfe3d6 -1001234567890"
             )
             return
 
         try:
-            company_id = int(context.args[0])
             target_group_id = int(context.args[1])
         except ValueError:
-            await self._send_error_message(update, "company_id and group_id must be integers.")
+            await self._send_error_message(update, "group_id must be an integer.")
             return
 
+        company_id = context.args[0]
         company = self.db.get_company_by_id(company_id)
         if not company:
             await self._send_error_message(update, f"Company {company_id} does not exist.")
@@ -898,9 +917,25 @@ class BotHandlers:
         success, message = self.db.release_tier1_claim(incident_id, user.id)
 
         if success:
-            # Update the message back to unclaimed state
             incident = self.db.get_incident(incident_id)
-            text, keyboard = self.message_builder.build_unclaimed_message(incident)
+
+            if incident['status'] == 'Unclaimed':
+                text, keyboard = self.message_builder.build_unclaimed_message(incident)
+            elif incident['status'] == 'Claimed_T1':
+                remaining_handles = self._extract_handles_from_assignments(incident, 'tier1')
+                primary_handle = remaining_handles[0] if remaining_handles else self._get_user_handle(user)
+                text, keyboard = self.message_builder.build_claimed_t1_message(incident, primary_handle)
+            elif incident['status'] == 'Escalated_Unclaimed_T2':
+                text, keyboard = self.message_builder.build_escalated_message(
+                    incident,
+                    self._get_user_handle(user)
+                )
+            elif incident['status'] == 'Claimed_T2':
+                manager_handles = self._extract_handles_from_assignments(incident, 'tier2')
+                primary_handle = manager_handles[0] if manager_handles else self._get_user_handle(user)
+                text, keyboard = self.message_builder.build_claimed_t2_message(incident, primary_handle)
+            else:
+                text, keyboard = self.message_builder.build_unclaimed_message(incident)
 
             try:
                 logger.info(
