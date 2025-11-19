@@ -2,7 +2,7 @@
 Message builder module for constructing incident messages and inline keyboards.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -25,7 +25,8 @@ class MessageBuilder:
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Dispatchers: Use the buttons below to claim or escalate this incident."
+            "Dispatchers: Use the buttons below to claim or escalate this incident. "
+            "Multiple responders can swarm the same issue."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -35,25 +36,29 @@ class MessageBuilder:
         return text, keyboard
 
     @staticmethod
-    def build_claimed_t1_message(incident: Dict[str, Any], claimer_handle: str) -> tuple[str, InlineKeyboardMarkup]:
+    def build_claimed_t1_message(incident: Dict[str, Any],
+                                 claimer_handles: List[str]) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for Tier 1 claimed incident (State 2)."""
+        responders = ", ".join(claimer_handles) if claimer_handles else "—"
         text = (
             "🚨 INCIDENT IN PROGRESS (Tier 1)\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Status: 🛠️ IN PROGRESS\n"
-            f"Owner: {claimer_handle}\n"
+            f"Responders: {responders}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "If you are no longer working on this, leave the claim or escalate to a manager."
+            "Multiple dispatchers can join or leave as needed. "
+            "Escalate to a manager only when the team needs support."
         )
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("❌ Leave Claim", callback_data=f"release_t1:{incident['incident_id']}"),
+                InlineKeyboardButton("✅ Join", callback_data=f"claim_t1:{incident['incident_id']}"),
+                InlineKeyboardButton("❌ Leave", callback_data=f"release_t1:{incident['incident_id']}"),
                 InlineKeyboardButton("⬆️ Escalate", callback_data=f"escalate:{incident['incident_id']}")
             ],
             [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t1:{incident['incident_id']}")]
@@ -61,9 +66,10 @@ class MessageBuilder:
 
         return text, keyboard
 
-    @staticmethod
-    def build_escalated_message(incident: Dict[str, Any], escalated_by_handle: str) -> tuple[str, InlineKeyboardMarkup]:
+    def build_escalated_message(self, incident: Dict[str, Any], escalated_by_handle: str,
+                                tier1_handles: List[str]) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for escalated incident (State 3)."""
+        responders = ", ".join(tier1_handles) if tier1_handles else "—"
         text = (
             "🚨 INCIDENT ESCALATED\n"
             "------------------------------\n"
@@ -71,11 +77,13 @@ class MessageBuilder:
             "Status: 🆘 ESCALATED – Awaiting manager\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            f"Previous owner: {escalated_by_handle}\n"
+            f"Escalated by: {escalated_by_handle}\n"
+            f"Dispatchers on it: {responders}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Managers: Claim this escalation if you are taking ownership."
+            "Managers: Claim this escalation if you are taking ownership. "
+            "More than one manager can join."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -84,24 +92,29 @@ class MessageBuilder:
 
         return text, keyboard
 
-    @staticmethod
-    def build_claimed_t2_message(incident: Dict[str, Any], claimer_handle: str) -> tuple[str, InlineKeyboardMarkup]:
+    def build_claimed_t2_message(self, incident: Dict[str, Any],
+                                 manager_handles: List[str],
+                                 tier1_handles: Optional[List[str]] = None) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for Tier 2 claimed incident (State 4)."""
+        managers = ", ".join(manager_handles) if manager_handles else "—"
+        dispatchers = ", ".join(tier1_handles or []) if tier1_handles else "—"
         text = (
             "🚨 INCIDENT IN PROGRESS (Tier 2)\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Status: 🛠️ IN PROGRESS\n"
-            f"Owner: {claimer_handle} (Manager)\n"
+            f"Managers: {managers}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
+            f"Dispatchers: {dispatchers}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Managers: Resolve this incident when the issue is fully addressed."
+            "Managers: Resolve when the issue is fully addressed. Others may join to assist."
         )
 
         keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Join", callback_data=f"claim_t2:{incident['incident_id']}")],
             [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t2:{incident['incident_id']}")]
         ])
 

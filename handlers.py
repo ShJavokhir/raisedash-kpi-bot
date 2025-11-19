@@ -3,6 +3,7 @@ Handlers module for Telegram bot commands and callbacks.
 """
 
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from telegram import Update, Chat
 from telegram.ext import ContextTypes
@@ -878,8 +879,11 @@ class BotHandlers:
         if success:
             # Update the message
             incident = self.db.get_incident(incident_id)
-            user_handle = self._get_user_handle(user)
-            text, keyboard = self.message_builder.build_claimed_t1_message(incident, user_handle)
+            if not incident:
+                await query.answer("Incident not found. Please refresh.", show_alert=True)
+                return
+            claimer_handles = self.db.get_active_claim_handles(incident_id, tier=1)
+            text, keyboard = self.message_builder.build_claimed_t1_message(incident, claimer_handles)
 
             try:
                 logger.info(
@@ -900,7 +904,15 @@ class BotHandlers:
         if success:
             # Update the message back to unclaimed state
             incident = self.db.get_incident(incident_id)
-            text, keyboard = self.message_builder.build_unclaimed_message(incident)
+            if not incident:
+                await query.answer("Incident not found. Please refresh.", show_alert=True)
+                return
+            claimer_handles = self.db.get_active_claim_handles(incident_id, tier=1) if incident else []
+
+            if incident and incident.get('status') == 'Claimed_T1' and claimer_handles:
+                text, keyboard = self.message_builder.build_claimed_t1_message(incident, claimer_handles)
+            else:
+                text, keyboard = self.message_builder.build_unclaimed_message(incident)
 
             try:
                 logger.info(
@@ -925,8 +937,12 @@ class BotHandlers:
         if success:
             # Update the message to escalated state
             incident = self.db.get_incident(incident_id)
+            if not incident:
+                await query.answer("Incident not found. Please refresh.", show_alert=True)
+                return
             user_handle = self._get_user_handle(user)
-            text, keyboard = self.message_builder.build_escalated_message(incident, user_handle)
+            tier1_handles = self.db.get_active_claim_handles(incident_id, tier=1)
+            text, keyboard = self.message_builder.build_escalated_message(incident, user_handle, tier1_handles)
 
             logger.info(
                 f"Incident {incident_id} escalated by user {user.id}; updating message and notifying managers"
@@ -955,8 +971,6 @@ class BotHandlers:
 
     async def _handle_claim_t2(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 2 (Manager) claim button."""
-        user_handle = self._get_user_handle(user)
-
         # Check if user is authorized manager
         manager_ids = self._collect_manager_ids(membership)
         if user.id not in manager_ids:
@@ -975,7 +989,16 @@ class BotHandlers:
         if success:
             # Update the message
             incident = self.db.get_incident(incident_id)
-            text, keyboard = self.message_builder.build_claimed_t2_message(incident, user_handle)
+            if not incident:
+                await query.answer("Incident not found. Please refresh.", show_alert=True)
+                return
+            manager_handles = self.db.get_active_claim_handles(incident_id, tier=2)
+            tier1_handles = self.db.get_active_claim_handles(incident_id, tier=1)
+            text, keyboard = self.message_builder.build_claimed_t2_message(
+                incident,
+                manager_handles,
+                tier1_handles
+            )
 
             logger.info(
                 f"Incident {incident_id} claimed by manager {user.id}; updating message"
@@ -1099,10 +1122,17 @@ class BotHandlers:
 
         # Extract incident_id from the bot's message
         incident_id = None
-        for word in bot_message_text.split():
-            if word.startswith('TKT-'):
-                incident_id = word.rstrip('.,')
+
+        # Prefer IDs from the formatted "ID:" line to avoid grabbing numbers from the description
+        for line in bot_message_text.splitlines():
+            if line.lower().startswith("id:"):
+                incident_id = line.split(":", 1)[1].strip().strip('.,')
                 break
+
+        if not incident_id:
+            match = re.search(r"(TKT-\d{4}-\d+|\b\d{4,}\b)", bot_message_text)
+            if match:
+                incident_id = match.group(1)
 
         if not incident_id:
             logger.warning(f"Could not extract incident_id from bot message: {bot_message_text}")

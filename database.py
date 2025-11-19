@@ -6,6 +6,7 @@ Implements the three-table schema: Groups, Users, Incidents.
 import sqlite3
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
@@ -118,6 +119,9 @@ class Database:
                 claimed_by_t1_id INTEGER,
                 claimed_by_t2_id INTEGER,
                 pending_resolution_by_user_id INTEGER,
+                escalated_by_user_id INTEGER,
+                resolved_by_user_id INTEGER,
+                resolved_by_tier INTEGER,
                 t_created TEXT NOT NULL,
                 t_claimed_tier1 TEXT,
                 t_escalated TEXT,
@@ -126,6 +130,63 @@ class Database:
                 t_resolved TEXT,
                 FOREIGN KEY (group_id) REFERENCES groups(group_id),
                 FOREIGN KEY (company_id) REFERENCES companies(company_id)
+            )
+        """)
+
+        # Incident claims table (supports multiple concurrent claimants per tier)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_claims (
+                claim_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                tier INTEGER NOT NULL CHECK(tier IN (1, 2)),
+                claimed_at TEXT NOT NULL,
+                released_at TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+            )
+        """)
+
+        # Incident participant rollups (one row per user/tier/incident)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_participants (
+                participant_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                tier INTEGER NOT NULL CHECK(tier IN (1, 2)),
+                first_claimed_at TEXT NOT NULL,
+                last_claimed_at TEXT NOT NULL,
+                last_released_at TEXT,
+                active_since TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                total_active_seconds INTEGER NOT NULL DEFAULT 0,
+                join_count INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN (
+                    'active',
+                    'released',
+                    'resolved_self',
+                    'resolved_other',
+                    'escalated',
+                    'closed'
+                )),
+                outcome_detail TEXT,
+                resolved_at TEXT,
+                UNIQUE(incident_id, user_id, tier),
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+            )
+        """)
+
+        # Immutable event log for downstream reporting
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_user_id INTEGER,
+                tier INTEGER,
+                at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
             )
         """)
 
@@ -158,6 +219,32 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_incidents_company
             ON incidents(company_id)
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_claims_incident
+            ON incident_claims(incident_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_claims_active
+            ON incident_claims(incident_id, tier)
+            WHERE is_active = 1
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_claim
+            ON incident_claims(incident_id, user_id, tier)
+            WHERE is_active = 1
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_participants_incident
+            ON incident_participants(incident_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_participants_incident_user
+            ON incident_participants(incident_id, user_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_incident
+            ON incident_events(incident_id, at)
+        """)
 
     def _apply_migrations(self, cursor):
         """Apply lightweight migrations for existing deployments."""
@@ -185,6 +272,9 @@ class Database:
         ensure_column('groups', 'requested_company_name', "TEXT")
 
         ensure_column('incidents', 'company_id', "INTEGER")
+        ensure_column('incidents', 'escalated_by_user_id', "INTEGER")
+        ensure_column('incidents', 'resolved_by_user_id', "INTEGER")
+        ensure_column('incidents', 'resolved_by_tier', "INTEGER")
 
         # Enhanced user tracking migration - Add comprehensive user fields
         ensure_column('users', 'username', "TEXT")  # Raw username without @
@@ -218,6 +308,85 @@ class Database:
                 updated_at = ?
             WHERE created_at IS NULL OR updated_at IS NULL
         """, (datetime.now().isoformat(), datetime.now().isoformat()))
+
+        # Ensure incident_claims table and indexes exist (multi-claim support)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_claims (
+                claim_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                tier INTEGER NOT NULL CHECK(tier IN (1, 2)),
+                claimed_at TEXT NOT NULL,
+                released_at TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_claims_incident
+            ON incident_claims(incident_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_claims_active
+            ON incident_claims(incident_id, tier)
+            WHERE is_active = 1
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_claim
+            ON incident_claims(incident_id, user_id, tier)
+            WHERE is_active = 1
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_participants (
+                participant_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                tier INTEGER NOT NULL CHECK(tier IN (1, 2)),
+                first_claimed_at TEXT NOT NULL,
+                last_claimed_at TEXT NOT NULL,
+                last_released_at TEXT,
+                active_since TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                total_active_seconds INTEGER NOT NULL DEFAULT 0,
+                join_count INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN (
+                    'active',
+                    'released',
+                    'resolved_self',
+                    'resolved_other',
+                    'escalated',
+                    'closed'
+                )),
+                outcome_detail TEXT,
+                resolved_at TEXT,
+                UNIQUE(incident_id, user_id, tier),
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_participants_incident
+            ON incident_participants(incident_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_participants_incident_user
+            ON incident_participants(incident_id, user_id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_user_id INTEGER,
+                tier INTEGER,
+                at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_incident
+            ON incident_events(incident_id, at)
+        """)
 
     # ==================== Company Management ====================
 
@@ -816,27 +985,21 @@ class Database:
     # ==================== Incident Management ====================
 
     def generate_incident_id(self) -> str:
-        """Generate next incident ID in format TKT-YYYY-NNNN."""
+        """Generate next incident ID as a zero-padded sequence (e.g., 0004)."""
+
+        def extract_suffix(incident_id: str) -> int:
+            """Return the last digit group from legacy or new IDs."""
+            matches = re.findall(r"(\d+)", incident_id or "")
+            return int(matches[-1]) if matches else 0
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            current_year = datetime.now().year
+            cursor.execute("SELECT incident_id FROM incidents")
+            rows = cursor.fetchall()
 
-            # Get the latest incident ID for current year
-            cursor.execute("""
-                SELECT incident_id FROM incidents
-                WHERE incident_id LIKE ?
-                ORDER BY incident_id DESC LIMIT 1
-            """, (f"TKT-{current_year}-%",))
-
-            row = cursor.fetchone()
-            if row:
-                # Extract number from TKT-YYYY-NNNN
-                last_num = int(row['incident_id'].split('-')[-1])
-                new_num = last_num + 1
-            else:
-                new_num = 1
-
-            return f"TKT-{current_year}-{new_num:04d}"
+        last_num = max((extract_suffix(row['incident_id']) for row in rows), default=0)
+        new_num = last_num + 1
+        return f"{new_num:04d}"
 
     def create_incident(self, group_id: int, created_by_id: int,
                        created_by_handle: str, description: str,
@@ -861,6 +1024,11 @@ class Database:
                     VALUES (?, ?, ?, ?, 'Unclaimed', ?, ?, ?, ?)
                 """, (incident_id, group_id, company_id_to_use, pinned_message_id,
                       created_by_id, created_by_handle, description, t_created))
+
+                self._record_event(cursor, incident_id, 'create', created_by_id, metadata={
+                    'group_id': group_id,
+                    'company_id': company_id_to_use
+                })
 
                 logger.info(f"Created incident {incident_id} in group {group_id}")
                 return incident_id
@@ -901,60 +1069,351 @@ class Database:
                 return dict(row)
             return None
 
+    # ==================== Claim Helpers ====================
+
+    def _has_active_claim(self, cursor, incident_id: str, user_id: int, tier: int) -> bool:
+        """Return True if the user already has an active claim on the incident for the tier."""
+        cursor.execute("""
+            SELECT 1 FROM incident_claims
+            WHERE incident_id = ? AND user_id = ? AND tier = ? AND is_active = 1
+            LIMIT 1
+        """, (incident_id, user_id, tier))
+        return cursor.fetchone() is not None
+
+    def _count_active_claims(self, cursor, incident_id: str, tier: int) -> int:
+        """Count how many active claims exist for an incident and tier."""
+        cursor.execute("""
+            SELECT COUNT(*) AS cnt FROM incident_claims
+            WHERE incident_id = ? AND tier = ? AND is_active = 1
+        """, (incident_id, tier))
+        row = cursor.fetchone()
+        return int(row['cnt']) if row and row['cnt'] is not None else 0
+
+    def _update_primary_claimer(self, cursor, incident_id: str, tier: int):
+        """
+        Keep the legacy primary claimer fields in sync with the oldest active claim.
+        This preserves compatibility with any downstream consumers expecting a single owner.
+        """
+        cursor.execute("""
+            SELECT user_id FROM incident_claims
+            WHERE incident_id = ? AND tier = ? AND is_active = 1
+            ORDER BY claimed_at ASC
+            LIMIT 1
+        """, (incident_id, tier))
+        row = cursor.fetchone()
+        new_primary = row['user_id'] if row else None
+        column = 'claimed_by_t1_id' if tier == 1 else 'claimed_by_t2_id'
+
+        cursor.execute(f"""
+            UPDATE incidents
+            SET {column} = ?
+            WHERE incident_id = ?
+        """, (new_primary, incident_id))
+
+    def _record_event(self, cursor, incident_id: str, event_type: str,
+                      user_id: Optional[int] = None, tier: Optional[int] = None,
+                      metadata: Optional[Dict[str, Any]] = None):
+        """Persist a lightweight event for audit and KPIs."""
+        cursor.execute("""
+            INSERT INTO incident_events (incident_id, event_type, actor_user_id, tier, at, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            incident_id,
+            event_type,
+            user_id,
+            tier,
+            datetime.now().isoformat(),
+            json.dumps(metadata or {})
+        ))
+
+    def _start_participation(self, cursor, incident_id: str, user_id: int,
+                             tier: int, claimed_at: str):
+        """Create or reactivate participant rollup for KPI calculations."""
+        cursor.execute("""
+            INSERT INTO incident_participants (
+                incident_id, user_id, tier,
+                first_claimed_at, last_claimed_at,
+                active_since, is_active, status, join_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, 'active', 1)
+            ON CONFLICT(incident_id, user_id, tier) DO UPDATE SET
+                last_claimed_at = excluded.last_claimed_at,
+                active_since = excluded.active_since,
+                is_active = 1,
+                status = 'active',
+                join_count = incident_participants.join_count + 1,
+                outcome_detail = NULL,
+                resolved_at = NULL
+        """, (incident_id, user_id, tier, claimed_at, claimed_at, claimed_at))
+
+    def _finalize_participation(self, cursor, incident_id: str, user_id: int,
+                                tier: int, stop_time: str, status: str,
+                                outcome_detail: Optional[str] = None,
+                                mark_resolved: bool = False):
+        """Close out a participant's active session and accrue time."""
+        cursor.execute("""
+            SELECT total_active_seconds, active_since, is_active
+            FROM incident_participants
+            WHERE incident_id = ? AND user_id = ? AND tier = ?
+        """, (incident_id, user_id, tier))
+        row = cursor.fetchone()
+        if not row:
+            return
+
+        total_seconds = int(row['total_active_seconds'] or 0)
+        active_since = row['active_since']
+
+        if row['is_active'] and active_since:
+            try:
+                started = datetime.fromisoformat(active_since)
+                ended = datetime.fromisoformat(stop_time)
+                delta = int(max(0, (ended - started).total_seconds()))
+                total_seconds += delta
+            except Exception as exc:
+                logger.warning(f"Could not compute active duration for {incident_id}/{user_id}: {exc}")
+
+        cursor.execute("""
+            UPDATE incident_participants
+            SET is_active = 0,
+                active_since = NULL,
+                last_released_at = ?,
+                total_active_seconds = ?,
+                status = ?,
+                resolved_at = CASE WHEN ? THEN ? ELSE resolved_at END,
+                outcome_detail = COALESCE(?, outcome_detail)
+            WHERE incident_id = ? AND user_id = ? AND tier = ?
+        """, (
+            stop_time,
+            total_seconds,
+            status,
+            1 if mark_resolved else 0,
+            stop_time,
+            outcome_detail,
+            incident_id,
+            user_id,
+            tier
+        ))
+
+    def _finalize_active_participants(self, cursor, incident_id: str,
+                                      resolved_by_user_id: int, resolved_at: str):
+        """Snap the duration for all active participants when incident closes."""
+        cursor.execute("""
+            SELECT user_id, tier FROM incident_participants
+            WHERE incident_id = ? AND is_active = 1
+        """, (incident_id,))
+
+        for row in cursor.fetchall():
+            status = 'resolved_self' if row['user_id'] == resolved_by_user_id else 'resolved_other'
+            self._finalize_participation(
+                cursor,
+                incident_id,
+                row['user_id'],
+                row['tier'],
+                resolved_at,
+                status,
+                mark_resolved=True
+            )
+
+    def _close_active_claims(self, cursor, incident_id: str, closed_at: str):
+        """Mark any lingering active claims as released at a specific time."""
+        cursor.execute("""
+            UPDATE incident_claims
+            SET is_active = 0,
+                released_at = COALESCE(released_at, ?)
+            WHERE incident_id = ? AND is_active = 1
+        """, (closed_at, incident_id))
+
+    def _get_user_tier_for_incident(self, cursor, incident_id: str, user_id: int) -> int:
+        """
+        Return the latest tier a user held on the incident.
+        Defaults to Tier 1 if no claims are found (defensive fallback).
+        """
+        cursor.execute("""
+            SELECT tier FROM incident_claims
+            WHERE incident_id = ? AND user_id = ?
+            ORDER BY claimed_at DESC
+            LIMIT 1
+        """, (incident_id, user_id))
+        row = cursor.fetchone()
+        try:
+            return int(row['tier'])
+        except Exception:
+            return 1
+
+    def get_active_claims(self, incident_id: str, tier: int) -> List[Dict[str, Any]]:
+        """Return active claims with handles for a given incident/tier."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT ic.user_id, ic.claimed_at, u.telegram_handle
+                FROM incident_claims ic
+                LEFT JOIN users u ON ic.user_id = u.user_id
+                WHERE ic.incident_id = ? AND ic.tier = ? AND ic.is_active = 1
+                ORDER BY ic.claimed_at ASC
+            """, (incident_id, tier))
+
+            claims = []
+            for row in cursor.fetchall():
+                handle = row['telegram_handle'] or f"User_{row['user_id']}"
+                claims.append({
+                    'user_id': row['user_id'],
+                    'claimed_at': row['claimed_at'],
+                    'handle': handle
+                })
+            return claims
+
+    def get_active_claim_handles(self, incident_id: str, tier: int) -> List[str]:
+        """Return active claimer handles (deduplicated) for a given incident/tier."""
+        claims = self.get_active_claims(incident_id, tier)
+        handles = []
+        seen = set()
+        for claim in claims:
+            handle = claim['handle']
+            if handle in seen:
+                continue
+            seen.add(handle)
+            handles.append(handle)
+        return handles
+
+    def get_incident_participants(self, incident_id: str) -> List[Dict[str, Any]]:
+        """Return participant rollups for an incident (all tiers)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM incident_participants
+                WHERE incident_id = ?
+                ORDER BY tier ASC, user_id ASC
+            """, (incident_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_incident_events(self, incident_id: str) -> List[Dict[str, Any]]:
+        """Return chronological event log for an incident."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM incident_events
+                WHERE incident_id = ?
+                ORDER BY at ASC, event_id ASC
+            """, (incident_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
     def claim_tier1(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
-        Atomically claim an unclaimed incident at Tier 1.
+        Add a Tier 1 claim for an incident. Multiple dispatchers can co-claim.
         Returns (success: bool, message: str).
         """
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT status FROM incidents WHERE incident_id = ?
+                """, (incident_id,))
+                incident = cursor.fetchone()
+
+                if not incident:
+                    return False, "Incident not found."
+
+                status = incident['status']
+                if status not in ('Unclaimed', 'Claimed_T1'):
+                    return False, "This incident is not available for Tier 1 claims right now."
+
+                if self._has_active_claim(cursor, incident_id, user_id, tier=1):
+                    return False, "You're already working on this incident."
+
                 t_claimed = datetime.now().isoformat()
 
                 cursor.execute("""
-                    UPDATE incidents
-                    SET status = 'Claimed_T1',
-                        claimed_by_t1_id = ?,
-                        t_claimed_tier1 = ?
-                    WHERE incident_id = ? AND status = 'Unclaimed'
-                """, (user_id, t_claimed, incident_id))
+                    INSERT INTO incident_claims (incident_id, user_id, tier, claimed_at, is_active)
+                    VALUES (?, ?, 1, ?, 1)
+                """, (incident_id, user_id, t_claimed))
 
-                if cursor.rowcount > 0:
-                    logger.info(f"Incident {incident_id} claimed by dispatcher {user_id}")
-                    return True, "Claim successful"
+                self._start_participation(cursor, incident_id, user_id, tier=1, claimed_at=t_claimed)
+
+                if status == 'Unclaimed':
+                    cursor.execute("""
+                        UPDATE incidents
+                        SET status = 'Claimed_T1',
+                            claimed_by_t1_id = COALESCE(claimed_by_t1_id, ?),
+                            t_claimed_tier1 = COALESCE(t_claimed_tier1, ?)
+                        WHERE incident_id = ?
+                    """, (user_id, t_claimed, incident_id))
                 else:
-                    logger.warning(f"Failed to claim {incident_id} - already claimed")
-                    return False, "Sorry, this incident has already been claimed."
+                    cursor.execute("""
+                        UPDATE incidents
+                        SET claimed_by_t1_id = COALESCE(claimed_by_t1_id, ?),
+                            t_claimed_tier1 = COALESCE(t_claimed_tier1, ?)
+                        WHERE incident_id = ?
+                    """, (user_id, t_claimed, incident_id))
+
+                self._record_event(cursor, incident_id, 'claim_t1', user_id, tier=1)
+
+                logger.info(f"Incident {incident_id} claimed by dispatcher {user_id}")
+                return True, "Claim successful"
 
     def release_tier1_claim(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
-        Release a Tier 1 claim if the user is the current owner.
+        Release a Tier 1 claim for the requesting user (without affecting other claimers).
         Returns (success: bool, message: str).
         """
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                if not self._has_active_claim(cursor, incident_id, user_id, tier=1):
+                    return False, "You are not part of this incident."
 
+                t_released = datetime.now().isoformat()
                 cursor.execute("""
-                    UPDATE incidents
-                    SET status = 'Unclaimed',
-                        claimed_by_t1_id = NULL,
-                        t_claimed_tier1 = NULL
+                    UPDATE incident_claims
+                    SET is_active = 0,
+                        released_at = ?
                     WHERE incident_id = ?
-                      AND status = 'Claimed_T1'
-                      AND claimed_by_t1_id = ?
-                """, (incident_id, user_id))
+                      AND user_id = ?
+                      AND tier = 1
+                      AND is_active = 1
+                """, (t_released, incident_id, user_id))
 
-                if cursor.rowcount > 0:
-                    logger.info(f"Incident {incident_id} released by dispatcher {user_id}")
-                    return True, "Claim released successfully"
+                self._finalize_participation(
+                    cursor,
+                    incident_id,
+                    user_id,
+                    tier=1,
+                    stop_time=t_released,
+                    status='released'
+                )
+
+                remaining = self._count_active_claims(cursor, incident_id, tier=1)
+
+                cursor.execute("SELECT status FROM incidents WHERE incident_id = ?", (incident_id,))
+                status_row = cursor.fetchone()
+                current_status = status_row['status'] if status_row else None
+
+                if remaining == 0 and current_status == 'Claimed_T1':
+                    cursor.execute("""
+                        UPDATE incidents
+                        SET status = 'Unclaimed',
+                            claimed_by_t1_id = NULL,
+                            t_claimed_tier1 = NULL
+                        WHERE incident_id = ?
+                    """, (incident_id,))
                 else:
-                    return False, "You cannot release this claim."
+                    self._update_primary_claimer(cursor, incident_id, tier=1)
+
+                self._record_event(
+                    cursor,
+                    incident_id,
+                    'release_t1',
+                    user_id,
+                    tier=1,
+                    metadata={'remaining_active': remaining}
+                )
+
+                logger.info(f"Incident {incident_id} released by dispatcher {user_id}")
+                return True, "Claim released successfully"
 
     def escalate_incident(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
         Escalate an incident from Tier 1 to Tier 2.
-        Only the current T1 owner can escalate.
+        Only an active Tier 1 claimer can escalate.
         Returns (success: bool, message: str).
         """
         with self._lock:
@@ -962,16 +1421,32 @@ class Database:
                 cursor = conn.cursor()
                 t_escalated = datetime.now().isoformat()
 
+                # Ensure the incident is in the right state
+                cursor.execute("""
+                    SELECT status FROM incidents WHERE incident_id = ?
+                """, (incident_id,))
+                incident = cursor.fetchone()
+
+                if not incident:
+                    return False, "Incident not found."
+
+                if incident['status'] != 'Claimed_T1':
+                    return False, "You cannot escalate this incident."
+
+                if not self._has_active_claim(cursor, incident_id, user_id, tier=1):
+                    return False, "Join the incident before escalating it."
+
                 cursor.execute("""
                     UPDATE incidents
                     SET status = 'Escalated_Unclaimed_T2',
-                        t_escalated = ?
+                        t_escalated = ?,
+                        escalated_by_user_id = ?
                     WHERE incident_id = ?
                       AND status = 'Claimed_T1'
-                      AND claimed_by_t1_id = ?
-                """, (t_escalated, incident_id, user_id))
+                """, (t_escalated, user_id, incident_id))
 
                 if cursor.rowcount > 0:
+                    self._record_event(cursor, incident_id, 'escalate', user_id, tier=1)
                     logger.info(f"Incident {incident_id} escalated by dispatcher {user_id}")
                     return True, "Incident escalated successfully"
                 else:
@@ -979,28 +1454,55 @@ class Database:
 
     def claim_tier2(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
-        Atomically claim an escalated incident at Tier 2.
+        Add a Tier 2 claim for an escalated incident.
         Returns (success: bool, message: str).
         """
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                t_claimed = datetime.now().isoformat()
-
                 cursor.execute("""
-                    UPDATE incidents
-                    SET status = 'Claimed_T2',
-                        claimed_by_t2_id = ?,
-                        t_claimed_tier2 = ?
-                    WHERE incident_id = ? AND status = 'Escalated_Unclaimed_T2'
-                """, (user_id, t_claimed, incident_id))
+                    SELECT status FROM incidents WHERE incident_id = ?
+                """, (incident_id,))
+                incident = cursor.fetchone()
 
-                if cursor.rowcount > 0:
-                    logger.info(f"Incident {incident_id} claimed by manager {user_id}")
-                    return True, "Escalation claimed successfully"
+                if not incident:
+                    return False, "Incident not found."
+
+                status = incident['status']
+                if status not in ('Escalated_Unclaimed_T2', 'Claimed_T2'):
+                    return False, "This incident is not escalated to managers."
+
+                if self._has_active_claim(cursor, incident_id, user_id, tier=2):
+                    return False, "You're already on this escalation."
+
+                t_claimed = datetime.now().isoformat()
+                cursor.execute("""
+                    INSERT INTO incident_claims (incident_id, user_id, tier, claimed_at, is_active)
+                    VALUES (?, ?, 2, ?, 1)
+                """, (incident_id, user_id, t_claimed))
+
+                self._start_participation(cursor, incident_id, user_id, tier=2, claimed_at=t_claimed)
+
+                if status == 'Escalated_Unclaimed_T2':
+                    cursor.execute("""
+                        UPDATE incidents
+                        SET status = 'Claimed_T2',
+                            claimed_by_t2_id = COALESCE(claimed_by_t2_id, ?),
+                            t_claimed_tier2 = COALESCE(t_claimed_tier2, ?)
+                        WHERE incident_id = ?
+                    """, (user_id, t_claimed, incident_id))
                 else:
-                    logger.warning(f"Failed to claim escalation {incident_id}")
-                    return False, "Sorry, this escalation has already been claimed."
+                    cursor.execute("""
+                        UPDATE incidents
+                        SET claimed_by_t2_id = COALESCE(claimed_by_t2_id, ?),
+                            t_claimed_tier2 = COALESCE(t_claimed_tier2, ?)
+                        WHERE incident_id = ?
+                    """, (user_id, t_claimed, incident_id))
+
+                self._record_event(cursor, incident_id, 'claim_t2', user_id, tier=2)
+
+                logger.info(f"Incident {incident_id} claimed by manager {user_id}")
+                return True, "Escalation claimed successfully"
 
     def request_resolution(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
@@ -1013,34 +1515,43 @@ class Database:
                 cursor = conn.cursor()
                 t_resolution_requested = datetime.now().isoformat()
 
-                # Check if user is T1 owner
+                cursor.execute("""
+                    SELECT status FROM incidents WHERE incident_id = ?
+                """, (incident_id,))
+                incident = cursor.fetchone()
+
+                if not incident:
+                    return False, "Incident not found."
+
+                status = incident['status']
+
+                if status == 'Claimed_T1':
+                    if not self._has_active_claim(cursor, incident_id, user_id, tier=1):
+                        return False, "You need to be an active Tier 1 claimer to resolve."
+                elif status == 'Claimed_T2':
+                    if not self._has_active_claim(cursor, incident_id, user_id, tier=2):
+                        return False, "You need to be an active manager on this escalation."
+                else:
+                    return False, "You cannot resolve this incident."
+
                 cursor.execute("""
                     UPDATE incidents
                     SET status = 'Awaiting_Summary',
                         pending_resolution_by_user_id = ?,
                         t_resolution_requested = ?
                     WHERE incident_id = ?
-                      AND status = 'Claimed_T1'
-                      AND claimed_by_t1_id = ?
-                """, (user_id, t_resolution_requested, incident_id, user_id))
+                      AND status = ?
+                """, (user_id, t_resolution_requested, incident_id, status))
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Resolution requested for {incident_id} from T1 user {user_id}")
-                    return True, "Resolution requested successfully"
-
-                # Check if user is T2 owner
-                cursor.execute("""
-                    UPDATE incidents
-                    SET status = 'Awaiting_Summary',
-                        pending_resolution_by_user_id = ?,
-                        t_resolution_requested = ?
-                    WHERE incident_id = ?
-                      AND status = 'Claimed_T2'
-                      AND claimed_by_t2_id = ?
-                """, (user_id, t_resolution_requested, incident_id, user_id))
-
-                if cursor.rowcount > 0:
-                    logger.info(f"Resolution requested for {incident_id} from T2 user {user_id}")
+                    self._record_event(
+                        cursor,
+                        incident_id,
+                        'resolution_requested',
+                        user_id,
+                        tier=1 if status == 'Claimed_T1' else 2
+                    )
+                    logger.info(f"Resolution requested for {incident_id} from user {user_id}")
                     return True, "Resolution requested successfully"
 
                 return False, "You cannot resolve this incident."
@@ -1056,19 +1567,25 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 t_resolved = datetime.now().isoformat()
+                resolver_tier = self._get_user_tier_for_incident(cursor, incident_id, user_id)
 
                 cursor.execute("""
                     UPDATE incidents
                     SET status = 'Resolved',
                         resolution_summary = ?,
                         t_resolved = ?,
-                        pending_resolution_by_user_id = NULL
+                        pending_resolution_by_user_id = NULL,
+                        resolved_by_user_id = ?,
+                        resolved_by_tier = ?
                     WHERE incident_id = ?
                       AND status = 'Awaiting_Summary'
                       AND pending_resolution_by_user_id = ?
-                """, (resolution_summary, t_resolved, incident_id, user_id))
+                """, (resolution_summary, t_resolved, user_id, resolver_tier, incident_id, user_id))
 
                 if cursor.rowcount > 0:
+                    self._close_active_claims(cursor, incident_id, t_resolved)
+                    self._finalize_active_participants(cursor, incident_id, user_id, t_resolved)
+                    self._record_event(cursor, incident_id, 'resolve', user_id, tier=resolver_tier)
                     logger.info(f"Incident {incident_id} resolved by user {user_id}")
                     return True, "Incident resolved successfully"
                 else:
