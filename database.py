@@ -186,6 +186,16 @@ class Database:
 
         ensure_column('incidents', 'company_id', "INTEGER")
 
+        # Enhanced user tracking migration - Add comprehensive user fields
+        ensure_column('users', 'username', "TEXT")  # Raw username without @
+        ensure_column('users', 'first_name', "TEXT")
+        ensure_column('users', 'last_name', "TEXT")
+        ensure_column('users', 'language_code', "TEXT")
+        ensure_column('users', 'is_bot', "INTEGER NOT NULL DEFAULT 0")
+        ensure_column('users', 'group_connections', "TEXT NOT NULL DEFAULT '[]'")  # JSON array
+        ensure_column('users', 'created_at', "TEXT")
+        ensure_column('users', 'updated_at', "TEXT")
+
         # Backfill defaults
         cursor.execute("""
             UPDATE groups
@@ -200,6 +210,14 @@ class Database:
             )
             WHERE company_id IS NULL
         """)
+
+        # Backfill user timestamps for existing records
+        cursor.execute("""
+            UPDATE users
+            SET created_at = ?,
+                updated_at = ?
+            WHERE created_at IS NULL OR updated_at IS NULL
+        """, (datetime.now().isoformat(), datetime.now().isoformat()))
 
     # ==================== Company Management ====================
 
@@ -607,22 +625,135 @@ class Database:
 
     # ==================== User Management ====================
 
+    def track_user(self, user_id: int, username: Optional[str] = None,
+                   first_name: Optional[str] = None, last_name: Optional[str] = None,
+                   language_code: Optional[str] = None, is_bot: bool = False,
+                   group_id: Optional[int] = None, team_role: Optional[str] = None):
+        """
+        Comprehensive user tracking function.
+        Captures all available Telegram user data and tracks group connections.
+
+        Args:
+            user_id: Telegram user ID (required)
+            username: Telegram username without @ (optional)
+            first_name: User's first name (optional, but usually available)
+            last_name: User's last name (optional)
+            language_code: User's language preference (optional)
+            is_bot: Whether the user is a bot (default: False)
+            group_id: Group ID where user was seen (optional, adds to group_connections)
+            team_role: User's team role if applicable (optional, preserves higher roles)
+
+        Returns:
+            Dict containing the user's complete information after upsert
+        """
+        with self._lock:
+            timestamp = datetime.now().isoformat()
+
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Get existing user data
+                cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                existing_row = cursor.fetchone()
+
+                # Prepare telegram_handle (for backward compatibility)
+                telegram_handle = f"@{username}" if username else f"User_{user_id}"
+
+                # Determine group_connections
+                group_connections = []
+                if existing_row:
+                    existing_connections = json.loads(existing_row['group_connections'] or '[]')
+                    group_connections = list(set(existing_connections))  # Remove duplicates
+
+                # Add new group connection if provided
+                if group_id is not None and group_id not in group_connections:
+                    group_connections.append(group_id)
+
+                # Determine final team_role (preserve higher-ranked roles)
+                final_team_role = None
+                if existing_row and existing_row['team_role']:
+                    final_team_role = existing_row['team_role']
+                if team_role:
+                    # Only update role if new role is provided and non-null
+                    final_team_role = team_role
+
+                # Determine created_at timestamp
+                created_at = existing_row['created_at'] if existing_row and existing_row['created_at'] else timestamp
+
+                # Perform upsert with all fields
+                cursor.execute("""
+                    INSERT INTO users (
+                        user_id, telegram_handle, username, first_name, last_name,
+                        language_code, is_bot, team_role, group_connections,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        telegram_handle = excluded.telegram_handle,
+                        username = COALESCE(excluded.username, username),
+                        first_name = COALESCE(excluded.first_name, first_name),
+                        last_name = COALESCE(excluded.last_name, last_name),
+                        language_code = COALESCE(excluded.language_code, language_code),
+                        is_bot = excluded.is_bot,
+                        team_role = COALESCE(excluded.team_role, team_role),
+                        group_connections = excluded.group_connections,
+                        updated_at = excluded.updated_at
+                """, (
+                    user_id, telegram_handle, username, first_name, last_name,
+                    language_code, 1 if is_bot else 0, final_team_role,
+                    json.dumps(group_connections), created_at, timestamp
+                ))
+
+                logger.info(
+                    f"Tracked user {user_id} ({telegram_handle}) "
+                    f"[first_name={first_name}, last_name={last_name}, "
+                    f"role={final_team_role}, groups={len(group_connections)}]"
+                )
+
+        # Return updated user data (outside the lock context)
+        return self.get_user(user_id)
+
     def upsert_user(self, user_id: int, telegram_handle: str, team_role: str):
-        """Insert or update user information."""
+        """
+        Legacy user upsert function (maintained for backward compatibility).
+        Prefer using track_user() for new code.
+        """
+        # Extract username from telegram_handle if it has @
+        username = telegram_handle[1:] if telegram_handle.startswith('@') else None
+
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                timestamp = datetime.now().isoformat()
+
+                # Get existing data to preserve
+                cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                existing_row = cursor.fetchone()
+
+                group_connections = '[]'
+                created_at = timestamp
+                if existing_row:
+                    group_connections = existing_row['group_connections'] or '[]'
+                    created_at = existing_row['created_at'] or timestamp
+
                 cursor.execute("""
-                    INSERT INTO users (user_id, telegram_handle, team_role)
-                    VALUES (?, ?, ?)
+                    INSERT INTO users (
+                        user_id, telegram_handle, username, team_role,
+                        group_connections, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         telegram_handle = excluded.telegram_handle,
-                        team_role = excluded.team_role
-                """, (user_id, telegram_handle, team_role))
+                        username = COALESCE(excluded.username, username),
+                        team_role = excluded.team_role,
+                        updated_at = excluded.updated_at
+                """, (user_id, telegram_handle, username, team_role,
+                      group_connections, created_at, timestamp))
+
                 logger.info(f"User {user_id} ({telegram_handle}) registered as {team_role}")
 
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get user information by user_id."""
+        """Get comprehensive user information by user_id."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -632,9 +763,55 @@ class Database:
                 return {
                     'user_id': row['user_id'],
                     'telegram_handle': row['telegram_handle'],
-                    'team_role': row['team_role']
+                    'username': row['username'],
+                    'first_name': row['first_name'],
+                    'last_name': row['last_name'],
+                    'language_code': row['language_code'],
+                    'is_bot': bool(row['is_bot']),
+                    'team_role': row['team_role'],
+                    'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
                 }
             return None
+
+    def add_group_connection_to_user(self, user_id: int, group_id: int):
+        """
+        Add a group connection to an existing user.
+        Creates user record if it doesn't exist.
+        """
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Get existing user
+                cursor.execute("SELECT group_connections FROM users WHERE user_id = ?", (user_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    # User exists, update group_connections
+                    connections = json.loads(row['group_connections'] or '[]')
+                    if group_id not in connections:
+                        connections.append(group_id)
+                        cursor.execute("""
+                            UPDATE users
+                            SET group_connections = ?,
+                                updated_at = ?
+                            WHERE user_id = ?
+                        """, (json.dumps(connections), datetime.now().isoformat(), user_id))
+                        logger.info(f"Added group {group_id} to user {user_id}'s connections")
+                else:
+                    # User doesn't exist, create minimal record with group connection
+                    timestamp = datetime.now().isoformat()
+                    cursor.execute("""
+                        INSERT INTO users (
+                            user_id, telegram_handle, group_connections,
+                            created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (user_id, f"User_{user_id}", json.dumps([group_id]),
+                          timestamp, timestamp))
+                    logger.info(f"Created user {user_id} with group {group_id} connection")
 
     # ==================== Incident Management ====================
 
