@@ -616,9 +616,9 @@ flowchart TD
     AcquireLock --> GetCompany[Extract company_id<br/>from group_info]
     GetCompany --> GenID[generate_incident_id<br/>company_id, group_id]
     GenID --> QueryLatest[SELECT MAX incident_id<br/>WHERE year = 2025]
-    QueryLatest --> ParseSeq[Extract sequence number<br/>from TKT-2025-NNNN]
+    QueryLatest --> ParseSeq[Extract sequence number<br/>from NNNN]
     ParseSeq --> Increment[New sequence = max + 1]
-    Increment --> FormatID[Format: TKT-2025-0042]
+    Increment --> FormatID[Format: 0042]
     FormatID --> InsertIncident[INSERT INTO incidents]
     InsertIncident --> SetFields[Set all fields:<br/>incident_id, group_id,<br/>company_id, status='Unclaimed']
     SetFields --> Commit[COMMIT transaction]
@@ -639,7 +639,7 @@ flowchart TD
 **Incident Created:**
 ```sql
 INSERT INTO incidents VALUES (
-    'TKT-2025-0042',      -- Unique ID
+    '0042',      -- Unique ID
     987654,               -- group_id
     1,                    -- company_id
     NULL,                 -- pinned_message_id (set later)
@@ -664,7 +664,7 @@ flowchart TD
     QueryLatest --> NoResults{Query returns<br/>empty set?}
     NoResults -->|Yes - First incident of year| DefaultSeq[sequence = 0]
     DefaultSeq --> Increment[New sequence = 1]
-    Increment --> FormatID[Format: TKT-2026-0001]
+    Increment --> FormatID[Format: 0001]
     FormatID --> InsertIncident[INSERT INTO incidents]
     InsertIncident --> Commit[✅ COMMIT transaction]
     Commit --> YearRollover[🎉 Year rollover successful<br/>Sequence reset to 0001]
@@ -700,7 +700,7 @@ flowchart TD
     User1 --> Lock1[Try acquire lock]
     User2 --> Lock2[Try acquire lock]
 
-    Lock1 -->|Acquired first| U1Gen[User 1: Generate ID<br/>TKT-2025-0042]
+    Lock1 -->|Acquired first| U1Gen[User 1: Generate ID<br/>0042]
     Lock2 -->|Blocked - Waiting| U2Wait[User 2: WAIT for lock]
 
     U1Gen --> U1Insert[User 1: INSERT incident]
@@ -710,12 +710,12 @@ flowchart TD
     U1Release --> U2Acquire[User 2: Acquire lock]
     U2Acquire --> U2Gen[User 2: Generate ID<br/>Queries latest = 0042]
     U2Gen --> U2Inc[User 2: Increment to 0043]
-    U2Inc --> U2Format[User 2: TKT-2025-0043]
+    U2Inc --> U2Format[User 2: 0043]
     U2Format --> U2Insert[User 2: INSERT incident]
     U2Insert --> U2Commit[User 2: COMMIT]
     U2Commit --> U2Release[User 2: Release lock]
 
-    U2Release --> Success[✅ No collision!<br/>TKT-2025-0042 and<br/>TKT-2025-0043 both created]
+    U2Release --> Success[✅ No collision!<br/>0042 and<br/>0043 both created]
 
     style Start fill:#e1f5ff
     style U2Wait fill:#ffc107
@@ -796,7 +796,7 @@ flowchart TD
 ```sql
 UPDATE incidents
 SET pinned_message_id = 12345
-WHERE incident_id = 'TKT-2025-0042'
+WHERE incident_id = '0042'
 ```
 **Used By:** Message editing when status changes (claim, escalate, resolve)
 
@@ -813,7 +813,7 @@ flowchart TD
     BotPerms -->|Yes| PinSuccess[✅ Message pinned]
     PinSuccess --> NotifyGroup[Telegram notification sent<br/>disable_notification=False]
     NotifyGroup --> LogSuccess[Log: Created and pinned<br/>incident {id} in group {gid}]
-    LogSuccess --> SuccessMsg[Send to user:<br/>'✅ Incident TKT-2025-0042<br/>created and pinned']
+    LogSuccess --> SuccessMsg[Send to user:<br/>'✅ Incident 0042<br/>created and pinned']
     SuccessMsg --> End([Command completes successfully])
 
     style Start fill:#fff3cd
@@ -841,7 +841,7 @@ flowchart TD
     BotPerms -->|No| PermissionDenied[TelegramError:<br/>'Not enough rights to<br/>pin a message']
     PermissionDenied --> CatchError[Catch TelegramError]
     CatchError --> LogError[Log: Error creating<br/>incident message: {e}]
-    LogError --> PartialSuccess[Send to user:<br/>'Created incident TKT-2025-0042<br/>but couldn't pin the message.<br/>Make sure the bot has<br/>pin message permissions.']
+    LogError --> PartialSuccess[Send to user:<br/>'Created incident 0042<br/>but couldn't pin the message.<br/>Make sure the bot has<br/>pin message permissions.']
     PartialSuccess --> IncidentExists[⚠️ Incident exists but unpinned]
     IncidentExists --> ManualPin[Admin must manually pin<br/>OR grant bot permissions]
     ManualPin --> End([Command completes with warning])
@@ -857,7 +857,7 @@ flowchart TD
 **Error:** `telegram.error.TelegramError`
 **Incident State:**
 ```sql
-incident_id = 'TKT-2025-0042'
+incident_id = '0042'
 status = 'Unclaimed'
 pinned_message_id = 12345  -- Message exists
 ```
@@ -994,12 +994,12 @@ flowchart TD
 
     Group1 --> GetMem1[get_company_membership<br/>Group A]
     GetMem1 --> Company1[company_id = 1]
-    Company1 --> Create1[Create incident<br/>TKT-2025-0042<br/>company_id = 1]
+    Company1 --> Create1[Create incident<br/>0042<br/>company_id = 1]
     Create1 --> Tagged1[✅ Tagged Company 1]
 
     Group2 --> GetMem2[get_company_membership<br/>Group B]
     GetMem2 --> Company2[company_id = 2]
-    Company2 --> Create2[Create incident<br/>TKT-2025-0001<br/>company_id = 2]
+    Company2 --> Create2[Create incident<br/>0001<br/>company_id = 2]
     Create2 --> Tagged2[✅ Tagged Company 2]
 
     Tagged1 --> Isolated[Both incidents isolated<br/>by company_id]
@@ -1022,7 +1022,7 @@ flowchart TD
     "team_role": null  // No global role
 }
 ```
-**Incident IDs:** Independent sequences per company (both can have TKT-2025-0042)
+**Incident IDs:** Independent sequences per company (both can have 0042)
 
 ---
 
@@ -1103,14 +1103,14 @@ flowchart TD
     ChatType -->|✅ Group| GroupReg{2. Group registration}
     GroupReg -->|✅ Active| DescCheck{3. Description validation}
     DescCheck -->|✅ Valid 5-3000 chars| UserTrack[4. Track user]
-    UserTrack --> CreateInc[5. Create incident<br/>TKT-2025-0042]
+    UserTrack --> CreateInc[5. Create incident<br/>0042]
     CreateInc --> BuildMsg[6. Build message with<br/>Claim button]
     BuildMsg --> SendMsg[7. Send message]
     SendMsg --> UpdateDB[8. Update pinned_message_id]
     UpdateDB --> PinMsg[9. Pin message]
     PinMsg -->|✅ Success| NotifyGroup[10. Group notified]
     NotifyGroup --> LogSuccess[11. Log success]
-    LogSuccess --> UserConfirm[12. Send confirmation<br/>'✅ Incident TKT-2025-0042<br/>created and pinned']
+    LogSuccess --> UserConfirm[12. Send confirmation<br/>'✅ Incident 0042<br/>created and pinned']
     UserConfirm --> End([✅ COMPLETE SUCCESS])
 
     style Start fill:#e1f5ff
@@ -1144,7 +1144,7 @@ flowchart TD
 **Database State:**
 ```sql
 -- incidents table
-TKT-2025-0042 | 987654 | 1 | 12345 | 'Unclaimed' | 123456 | '@john' | 'Truck...' | 2025-11-19T12:00:00
+0042 | 987654 | 1 | 12345 | 'Unclaimed' | 123456 | '@john' | 'Truck...' | 2025-11-19T12:00:00
 
 -- users table
 123456 | 'john' | 'John' | 'Doe' | 'en' | 0 | '[987654]' | NULL | ...
@@ -1157,7 +1157,7 @@ TKT-2025-0042 | 987654 | 1 | 12345 | 'Unclaimed' | 123456 | '@john' | 'Truck...'
 ```mermaid
 flowchart TD
     Start([User: /new_issue Description]) --> AllChecks[1-8. All validations<br/>and DB operations<br/>✅ PASS]
-    AllChecks --> IncidentExists[✅ Incident TKT-2025-0042<br/>created in database]
+    AllChecks --> IncidentExists[✅ Incident 0042<br/>created in database]
     IncidentExists --> MessageSent[✅ Message sent to group<br/>with Claim button]
     MessageSent --> PinAttempt[9. Attempt pin]
     PinAttempt -->|❌ Permission denied| CatchError[Catch TelegramError]
@@ -1358,7 +1358,7 @@ flowchart TD
 **Database State:**
 ```sql
 -- Incident exists
-TKT-2025-0042 | 987654 | 1 | NULL | 'Unclaimed' | ...
+0042 | 987654 | 1 | NULL | 'Unclaimed' | ...
 -- But pinned_message_id = NULL (message never sent)
 ```
 **Recovery:** Implement webhook to detect bot removal and mark incidents
@@ -1461,9 +1461,9 @@ flowchart TD
     User2Start --> U2Wait[User 2: Wait for lock]
 
     U1Lock --> U1GenID[User 1: Generate ID<br/>current_year = 2025]
-    U1GenID --> U1Query[Query: MAX in 2025<br/>= TKT-2025-9999]
+    U1GenID --> U1Query[Query: MAX in 2025<br/>= 9999]
     U1Query --> U1Inc[Increment: 10000]
-    U1Inc --> U1Format[Format: TKT-2025-10000]
+    U1Inc --> U1Format[Format: 10000]
     U1Format --> U1Insert[INSERT incident]
     U1Insert --> U1Release[Release lock<br/>Now: 2026-01-01 00:00:00.1]
 
@@ -1472,7 +1472,7 @@ flowchart TD
     U2GenID --> U2Query[Query: MAX in 2026<br/>= No results]
     U2Query --> U2Default[Default sequence: 0]
     U2Default --> U2Inc[Increment: 1]
-    U2Inc --> U2Format[Format: TKT-2026-0001]
+    U2Inc --> U2Format[Format: 0001]
     U2Format --> U2Insert[INSERT incident]
 
     U2Insert --> Success[✅ Year rollover handled<br/>correctly]
@@ -1541,7 +1541,7 @@ flowchart TD
     Start([User sends 100x<br/>/new_issue in 1 second]) --> NoRateLimit[❌ No rate limiting<br/>implemented]
     NoRateLimit --> AllProcessed[All 100 commands<br/>queue for processing]
     AllProcessed --> Sequential[Process sequentially<br/>due to lock]
-    Sequential --> Create100[Create 100 incidents<br/>TKT-2025-0001 to 0100]
+    Sequential --> Create100[Create 100 incidents<br/>0001 to 0100]
     Create100 --> Pin100[Attempt to pin<br/>100 messages]
     Pin100 --> GroupSpam[⚠️ Group flooded with<br/>pinned messages]
     GroupSpam --> UserAnnoyance[Group members receive<br/>100 notifications]
