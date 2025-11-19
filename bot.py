@@ -68,7 +68,6 @@ class IncidentBot:
         app.add_handler(CommandHandler("add_dispatcher", self.bot_handlers.add_dispatcher_command))
         app.add_handler(CommandHandler("add_manager", self.bot_handlers.add_manager_command))
         app.add_handler(CommandHandler("add_group", self.bot_handlers.add_group_command))
-        app.add_handler(CommandHandler("register_driver", self.bot_handlers.register_driver_command))
         app.add_handler(CommandHandler("new_issue", self.bot_handlers.new_issue_command))
 
         # Chat member updates (bot invited/removed)
@@ -83,7 +82,7 @@ class IncidentBot:
         # Message handler (for resolution summaries)
         # This should be last to catch replies
         app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.REPLY,
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
             self.bot_handlers.message_handler
         ))
 
