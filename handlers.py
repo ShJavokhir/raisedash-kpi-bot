@@ -37,6 +37,47 @@ class BotHandlers:
             return f"@{user.username}"
         return f"User_{user.id}"
 
+    def _track_user_interaction(self, user, group_id: Optional[int] = None,
+                                team_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Universal user tracking function.
+        Captures comprehensive user data from any Telegram interaction.
+
+        Args:
+            user: Telegram User object from update.effective_user or similar
+            group_id: Optional group ID where interaction occurred
+            team_role: Optional team role to assign/preserve
+
+        Returns:
+            Dict containing user's complete information, or None if user is invalid
+        """
+        if not user:
+            return None
+
+        try:
+            # Extract all available user data from Telegram User object
+            user_id = user.id
+            username = user.username if hasattr(user, 'username') and user.username else None
+            first_name = user.first_name if hasattr(user, 'first_name') and user.first_name else None
+            last_name = user.last_name if hasattr(user, 'last_name') and user.last_name else None
+            language_code = user.language_code if hasattr(user, 'language_code') and user.language_code else None
+            is_bot = user.is_bot if hasattr(user, 'is_bot') else False
+
+            # Track user with all available data
+            return self.db.track_user(
+                user_id=user_id,
+                username=username,
+                first_name=first_name,
+                last_name=last_name,
+                language_code=language_code,
+                is_bot=is_bot,
+                group_id=group_id,
+                team_role=team_role
+            )
+        except Exception as e:
+            logger.error(f"Error tracking user interaction: {e}", exc_info=True)
+            return None
+
     def _role_rank(self, role: Optional[str]) -> int:
         """Return numeric rank for a role (higher is more privileged)."""
         if not role:
@@ -211,6 +252,11 @@ class BotHandlers:
         group_id = chat.id
         group_name = chat.title or f"Group_{group_id}"
         inviter = chat_member_update.from_user
+
+        # Track the user who invited the bot to the group
+        if inviter:
+            self._track_user_interaction(inviter, group_id=group_id)
+
         inviter_handle = self._get_user_handle(inviter) if inviter else "Unknown"
 
         group = self.db.get_group(group_id)
@@ -423,11 +469,13 @@ class BotHandlers:
         # Get mentioned user from entities (more reliable than parsing text)
         dispatcher_id = None
         dispatcher_handle = None
+        dispatcher_user_object = None  # Store full user object if available
 
         if update.message.entities:
             for entity in update.message.entities:
                 if entity.type == "text_mention":
-                    # User doesn't have a username
+                    # User doesn't have a username - we have full User object
+                    dispatcher_user_object = entity.user
                     dispatcher_id = entity.user.id
                     dispatcher_handle = f"@User_{entity.user.id}"
                     break
@@ -464,7 +512,12 @@ class BotHandlers:
             else:
                 self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
 
-            self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
+            # Use comprehensive tracking if we have the full user object
+            if dispatcher_user_object:
+                self._track_user_interaction(dispatcher_user_object, group_id=chat.id, team_role='Dispatcher')
+            else:
+                self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
+
             await update.message.reply_text(
                 f"✅ Added {dispatcher_handle} as a dispatcher for this group."
             )
@@ -656,15 +709,17 @@ class BotHandlers:
     async def register_driver_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /register_driver command."""
         user = update.effective_user
-        user_handle = self._get_user_handle(user)
+        chat = update.effective_chat
+        group_id = chat.id if chat and self._is_group_chat(chat) else None
 
-        self._ensure_user_role(user.id, 'Driver', user_handle)
+        # Track user with Driver role
+        self._track_user_interaction(user, group_id=group_id, team_role='Driver')
 
         await update.message.reply_text(
             f"✅ You have been registered as a Driver!\n"
             f"You can now report incidents using /new_issue"
         )
-        logger.info(f"Registered driver: {user.id} ({user_handle})")
+        logger.info(f"Registered driver: {user.id} ({self._get_user_handle(user)})")
 
     async def new_issue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new_issue command - creates a new incident."""
@@ -707,6 +762,9 @@ class BotHandlers:
                 "Description too short. Please provide more details (at least 5 characters)."
             )
             return
+
+        # Track user creating the incident (captures comprehensive user data)
+        self._track_user_interaction(user, group_id=chat.id)
 
         user_handle = self._get_user_handle(user)
 
@@ -761,6 +819,11 @@ class BotHandlers:
         callback_data = query.data
         user = update.effective_user
         chat = update.effective_chat
+
+        # Track user interaction (capture all users clicking buttons)
+        if user:
+            group_id = chat.id if chat and self._is_group_chat(chat) else None
+            self._track_user_interaction(user, group_id=group_id)
 
         logger.info(f"Callback: {callback_data} from user {user.id} in chat {chat.id}")
 
@@ -1003,6 +1066,12 @@ class BotHandlers:
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle regular messages (specifically for resolution summaries)."""
         message = update.message
+
+        # Track user interaction (capture all users sending messages)
+        if message and message.from_user:
+            chat = message.chat
+            group_id = chat.id if chat and self._is_group_chat(chat) else None
+            self._track_user_interaction(message.from_user, group_id=group_id)
 
         # Only process replies
         if not message.reply_to_message:
