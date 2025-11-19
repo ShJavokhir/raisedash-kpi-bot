@@ -15,6 +15,13 @@ class Config:
     # Telegram Bot Token (required)
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
+    # Platform administrators (comma-separated Telegram user IDs)
+    _RAW_PLATFORM_ADMIN_IDS = os.getenv('PLATFORM_ADMIN_IDS', '')
+    PLATFORM_ADMIN_IDS = [
+        int(part.strip()) for part in _RAW_PLATFORM_ADMIN_IDS.split(',')
+        if part.strip()
+    ]
+
     # Database settings
     DATABASE_PATH = os.getenv('DATABASE_PATH', 'incidents.db')
 
@@ -35,6 +42,11 @@ class Config:
             raise ValueError(
                 "TELEGRAM_BOT_TOKEN is required. "
                 "Please set it in your .env file or environment variables."
+            )
+        if not cls.PLATFORM_ADMIN_IDS:
+            raise ValueError(
+                "PLATFORM_ADMIN_IDS is required. "
+                "Provide a comma-separated list of Telegram user IDs."
             )
 
     @classmethod

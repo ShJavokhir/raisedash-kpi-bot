@@ -11,6 +11,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    ChatMemberHandler,
     filters
 )
 
@@ -43,7 +44,10 @@ class IncidentBot:
         self.application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
 
         # Initialize handlers
-        self.bot_handlers = BotHandlers(self.db)
+        self.bot_handlers = BotHandlers(
+            self.db,
+            platform_admin_ids=Config.PLATFORM_ADMIN_IDS
+        )
 
         # Initialize reminder service
         self.reminder_service = None  # Will be initialized after app is built
@@ -62,8 +66,15 @@ class IncidentBot:
         app.add_handler(CommandHandler("help", self.bot_handlers.start_command))  # Alias for /start
         app.add_handler(CommandHandler("configure_managers", self.bot_handlers.configure_managers_command))
         app.add_handler(CommandHandler("add_dispatcher", self.bot_handlers.add_dispatcher_command))
+        app.add_handler(CommandHandler("add_group", self.bot_handlers.add_group_command))
         app.add_handler(CommandHandler("register_driver", self.bot_handlers.register_driver_command))
         app.add_handler(CommandHandler("new_issue", self.bot_handlers.new_issue_command))
+
+        # Chat member updates (bot invited/removed)
+        app.add_handler(ChatMemberHandler(
+            self.bot_handlers.chat_member_update_handler,
+            chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER
+        ))
 
         # Callback query handler (for all inline buttons)
         app.add_handler(CallbackQueryHandler(self.bot_handlers.callback_handler))
@@ -104,6 +115,10 @@ class IncidentBot:
     async def _post_init(self, application: Application):
         """Post-initialization callback to start background tasks."""
         logger.info("Starting background tasks...")
+        bot_user_id = getattr(application.bot, "id", None)
+        if bot_user_id:
+            self.bot_handlers.set_bot_user_id(bot_user_id)
+
         # Start the reminder task
         asyncio.create_task(self._reminder_task())
 
@@ -121,7 +136,7 @@ class IncidentBot:
 
         # Start the bot
         self.application.run_polling(
-            allowed_updates=['message', 'callback_query', 'chat_member']
+            allowed_updates=['message', 'callback_query', 'chat_member', 'my_chat_member']
         )
 
 

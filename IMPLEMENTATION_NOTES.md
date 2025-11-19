@@ -13,6 +13,7 @@ This document contains notes about the implementation, potential issues, and are
 5. **Automated Reminders**: Background task checks for SLA violations
 6. **Comprehensive Logging**: All actions are logged
 7. **Error Handling**: Try-catch blocks around critical operations
+8. **Multi-Tenant Onboarding**: Companies table + activation workflow gated by Platform Admin `/add_group`
 
 ### ⚠️ Potential Issues and Mitigations
 
@@ -287,6 +288,13 @@ cursor.execute("PRAGMA journal_mode=WAL")
 3. **Documentation**: Could add sphinx for API documentation
 4. **Constants**: Some magic strings could be moved to constants
 5. **Validation**: Could add pydantic for data validation
+
+### 🏢 Multi-Tenant Workflow
+
+- Bot onboarding is company-aware. When invited to a group the bot posts “Please reply company name…” and halts all workflows until activation.
+- Replies to that prompt are forwarded to every `PLATFORM_ADMIN_ID` (via DM) with group metadata, requester, and requested company name.
+- Platform admins approve groups with `/add_group <company_id> <group_id>` (private chat). The command copies the company’s dispatcher/manager lists into the group, clears registration flags, and posts an activation confirmation inside the group.
+- Dispatcher/manager authorization now combines company-level metadata with any legacy per-group overrides, ensuring backwards compatibility while enabling company-wide reporting.
 
 ### 🎯 Quick Wins for Enhancement
 

@@ -50,6 +50,14 @@ class ReminderService:
                 continue
 
             try:
+                membership = self.db.get_company_membership(incident['group_id'])
+                if not membership or not membership.get('group'):
+                    logger.warning(f"No group membership found for incident {incident_id}")
+                    continue
+                if not membership.get('is_active'):
+                    logger.info(f"Skipping unclaimed reminder for inactive group {incident['group_id']}")
+                    continue
+
                 # Calculate how long it's been unclaimed
                 t_created = datetime.fromisoformat(incident['t_created'])
                 minutes_unclaimed = int((datetime.now() - t_created).total_seconds() / 60)
@@ -90,13 +98,26 @@ class ReminderService:
                 continue
 
             try:
-                # Get group info for manager handles
-                group = self.db.get_group(incident['group_id'])
-                if not group:
-                    logger.warning(f"No group found for incident {incident_id}")
+                # Get group/company info for manager handles
+                membership = self.db.get_company_membership(incident['group_id'])
+                if not membership or not membership.get('group'):
+                    logger.warning(f"No group membership found for incident {incident_id}")
+                    continue
+                if not membership.get('is_active'):
+                    logger.info(f"Skipping escalation reminder for inactive group {incident['group_id']}")
                     continue
 
-                manager_handles = group['manager_handles']
+                manager_handles = []
+                seen_handles = set()
+                for source in (membership.get('company'), membership.get('group')):
+                    if not source:
+                        continue
+                    for handle in source.get('manager_handles', []):
+                        if not handle or handle in seen_handles:
+                            continue
+                        seen_handles.add(handle)
+                        manager_handles.append(handle)
+
                 if not manager_handles:
                     logger.warning(f"No managers configured for group {incident['group_id']}")
                     continue

@@ -3,7 +3,7 @@ Handlers module for Telegram bot commands and callbacks.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from telegram import Update, Chat
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
@@ -17,9 +17,13 @@ logger = logging.getLogger(__name__)
 class BotHandlers:
     """Handles all bot commands and callback queries."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database,
+                 platform_admin_ids: Optional[List[int]] = None,
+                 bot_user_id: Optional[int] = None):
         self.db = db
         self.message_builder = MessageBuilder()
+        self.platform_admin_ids = set(platform_admin_ids or [])
+        self.bot_user_id = bot_user_id
 
     def _get_user_handle(self, user) -> str:
         """Get user's handle with @ prefix."""
@@ -27,26 +31,233 @@ class BotHandlers:
             return f"@{user.username}"
         return f"User_{user.id}"
 
+    def set_bot_user_id(self, bot_user_id: int):
+        """Persist the bot user's Telegram ID."""
+        self.bot_user_id = bot_user_id
+        logger.info(f"Bot user ID cached: {bot_user_id}")
+
+    def _get_bot_user_id(self, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+        """Retrieve the cached bot user ID, fallback to the runtime context."""
+        if self.bot_user_id:
+            return self.bot_user_id
+        return context.bot.id if context and context.bot else None
+
+    def _is_platform_admin(self, user_id: Optional[int]) -> bool:
+        """Return True if the user is a platform-level administrator."""
+        return bool(user_id and user_id in self.platform_admin_ids)
+
+    def _log_audit_event(self, event: str, **payload: Any):
+        """Log structured audit events for sensitive operations."""
+        logger.info("AUDIT %s | %s", event, payload)
+
+    async def _notify_pending_activation(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                         membership: Dict[str, Any]):
+        """Inform the group that activation is still pending."""
+        group = membership.get('group') or {}
+        requested_name = group.get('requested_company_name')
+        info_line = (
+            "This group is pending activation. "
+            "Please reply to the registration prompt so Platform Admin can attach it to a company."
+        )
+        if requested_name:
+            info_line += f"\n\nRequested company: {requested_name}"
+
+        if update.callback_query:
+            await update.callback_query.answer(info_line, show_alert=True)
+        elif update.message:
+            await update.message.reply_text(info_line)
+
+    async def _require_active_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                    chat: Optional[Chat] = None) -> Optional[Dict[str, Any]]:
+        """Ensure the current chat is an active, company-attached group."""
+        chat = chat or (update.effective_chat if update else None)
+        if not chat or not self._is_group_chat(chat):
+            await self._send_error_message(update, "This action only works inside a Telegram group.")
+            return None
+
+        membership = self.db.get_company_membership(chat.id)
+        if not membership or not membership.get('group'):
+            await self._send_error_message(
+                update,
+                "This group is not registered yet. Please invite the bot and complete activation first."
+            )
+            return None
+
+        if not membership.get('is_active'):
+            await self._notify_pending_activation(update, context, membership)
+            return None
+
+        return membership
+
+    def _collect_dispatcher_ids(self, membership: Dict[str, Any]) -> List[int]:
+        """Combine dispatcher IDs from group and company metadata."""
+        ids: List[int] = []
+        seen = set()
+        for source in (membership.get('company'), membership.get('group')):
+            if not source:
+                continue
+            for dispatcher_id in source.get('dispatcher_user_ids', []):
+                if dispatcher_id is None or dispatcher_id in seen:
+                    continue
+                seen.add(dispatcher_id)
+                ids.append(dispatcher_id)
+        return ids
+
+    def _collect_manager_ids(self, membership: Dict[str, Any]) -> List[int]:
+        """Combine manager IDs from group and company metadata."""
+        ids: List[int] = []
+        seen = set()
+        for source in (membership.get('company'), membership.get('group')):
+            if not source:
+                continue
+            for manager_id in source.get('manager_user_ids', []):
+                if manager_id is None or manager_id in seen:
+                    continue
+                seen.add(manager_id)
+                ids.append(manager_id)
+        return ids
+
+    def _collect_manager_handles(self, membership: Dict[str, Any]) -> List[str]:
+        """Combine manager handles from group and company metadata."""
+        handles: List[str] = []
+        seen = set()
+        for source in (membership.get('company'), membership.get('group')):
+            if not source:
+                continue
+            for handle in source.get('manager_handles', []):
+                if not handle or handle in seen:
+                    continue
+                seen.add(handle)
+                handles.append(handle)
+        return handles
+
     def _is_group_chat(self, chat: Chat) -> bool:
         """Check if the chat is a group or supergroup."""
         return chat.type in ['group', 'supergroup']
 
     async def _send_error_message(self, update: Update, message: str):
         """Send an error message to the user."""
+        user_id = update.effective_user.id if update.effective_user else 'unknown'
+        logger.warning(f"User {user_id} received error: {message}")
         if update.message:
             await update.message.reply_text(f"❌ {message}")
         elif update.callback_query:
             await update.callback_query.answer(message, show_alert=True)
+
+    # ==================== Registration Workflow ====================
+
+    async def chat_member_update_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle bot invites to groups and kick off registration workflow."""
+        chat_member_update = update.my_chat_member
+        if not chat_member_update:
+            return
+
+        chat = chat_member_update.chat
+        if not self._is_group_chat(chat):
+            return
+
+        new_status = chat_member_update.new_chat_member.status
+        if new_status not in ['member', 'administrator']:
+            return
+
+        group_id = chat.id
+        group_name = chat.title or f"Group_{group_id}"
+        inviter = chat_member_update.from_user
+        inviter_handle = self._get_user_handle(inviter) if inviter else "Unknown"
+
+        group = self.db.get_group(group_id)
+        if group and group.get('status') == 'active':
+            logger.info(f"Group {group_id} already active; no registration prompt needed")
+            return
+
+        if group and group.get('status') == 'pending' and group.get('registration_message_id'):
+            logger.info(f"Group {group_id} already pending activation; prompt exists")
+            return
+
+        try:
+            prompt_message = await context.bot.send_message(
+                chat_id=group_id,
+                text="Please reply company name to this message to activate KPI bot in this group."
+            )
+        except TelegramError as exc:
+            logger.error(f"Failed to send registration prompt to group {group_id}: {exc}")
+            return
+
+        self.db.record_group_request(
+            group_id=group_id,
+            group_name=group_name,
+            registration_message_id=prompt_message.message_id,
+            requested_by_user_id=inviter.id if inviter else None,
+            requested_by_handle=inviter_handle
+        )
+
+        self._log_audit_event(
+            "group_registration_prompt_sent",
+            group_id=group_id,
+            group_name=group_name,
+            invited_by_id=inviter.id if inviter else None,
+            invited_by_handle=inviter_handle
+        )
+
+    async def _handle_registration_reply(self, message, context: ContextTypes.DEFAULT_TYPE, group: Dict[str, Any]):
+        """Process replies to the registration prompt."""
+        requested_name = (message.text or "").strip()
+        if len(requested_name) < 2:
+            await message.reply_text("Please provide a valid company name so I can activate this group.")
+            return
+
+        existing_name = (group.get('requested_company_name') or "").strip().lower()
+        normalized_new = requested_name.strip().lower()
+
+        if existing_name and existing_name == normalized_new:
+            await message.reply_text(
+                "Thanks! I already have this request on file. "
+                "Group will be activated soon and I will notify when it's activated."
+            )
+            return
+
+        requester = message.from_user
+        requester_handle = self._get_user_handle(requester)
+
+        self.db.update_group_request_details(
+            group_id=group['group_id'],
+            requested_company_name=requested_name,
+            requested_by_user_id=requester.id,
+            requested_by_handle=requester_handle
+        )
+
+        admin_notification = (
+            "🚨 New KPI Bot activation request\n"
+            f"Group: {group['group_name']} ({group['group_id']})\n"
+            f"Company: {requested_name}\n"
+            f"Requested by: {requester_handle} ({requester.id})"
+        )
+
+        for admin_id in self.platform_admin_ids:
+            try:
+                await context.bot.send_message(chat_id=admin_id, text=admin_notification)
+            except TelegramError as exc:
+                logger.error(f"Failed to notify platform admin {admin_id}: {exc}")
+
+        await message.reply_text("Group will be activated soon and I will notify when it's activated.")
+
+        self._log_audit_event(
+            "group_activation_requested",
+            group_id=group['group_id'],
+            requested_company=requested_name,
+            requested_by_id=requester.id,
+            requested_by_handle=requester_handle
+        )
 
     # ==================== Command Handlers ====================
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start and /help commands."""
         welcome_message = (
-            "👋 Welcome to the Enterprise Incident Management Bot!\n\n"
+            "👋 Welcome to the Raisedash KPI Bot!\n\n"
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
-            "/start - Show this help message\n"
+                
             "/configure_managers @user1 @user2 - Configure managers for this group (Admin only)\n"
             "/add_dispatcher @user - Add a dispatcher to this group (Admin only)\n"
             "/register_driver - Register yourself as a driver\n"
@@ -75,6 +286,10 @@ class BotHandlers:
             await self._send_error_message(update, "Only group admins can configure managers.")
             return
 
+        membership = await self._require_active_group(update, context)
+        if not membership:
+            return
+
         # Parse manager handles from command
         if not context.args:
             await update.message.reply_text(
@@ -94,13 +309,28 @@ class BotHandlers:
             await self._send_error_message(update, "Please provide at least one manager handle.")
             return
 
-        # Get or create group configuration
-        group_name = chat.title or f"Group_{chat.id}"
-        self.db.upsert_group(
-            group_id=chat.id,
-            group_name=group_name,
-            manager_handles=manager_handles
-        )
+        group_info = membership['group']
+        company_info = membership.get('company')
+
+        if company_info:
+            self.db.update_company_roles(
+                company_id=company_info['company_id'],
+                manager_handles=manager_handles
+            )
+            # Sync group cache with the latest company roles
+            self.db.attach_group_to_company(
+                group_id=group_info['group_id'],
+                group_name=group_info['group_name'],
+                company_id=company_info['company_id'],
+                status='active'
+            )
+        else:
+            # Legacy fallback: update group-only configuration
+            self.db.upsert_group(
+                group_id=chat.id,
+                group_name=group_info['group_name'],
+                manager_handles=manager_handles
+            )
 
         managers_text = ", ".join(manager_handles)
         await update.message.reply_text(
@@ -124,13 +354,8 @@ class BotHandlers:
             await self._send_error_message(update, "Only group admins can add dispatchers.")
             return
 
-        # Check if group is configured
-        group = self.db.get_group(chat.id)
-        if not group:
-            await self._send_error_message(
-                update,
-                "Please configure managers first with /configure_managers"
-            )
+        membership = await self._require_active_group(update, context)
+        if not membership:
             return
 
         # Parse dispatcher mention
@@ -163,9 +388,28 @@ class BotHandlers:
             if not dispatcher_handle.startswith('@'):
                 dispatcher_handle = f"@{dispatcher_handle}"
 
+        group_info = membership['group']
+        company_info = membership.get('company')
+
         # If we got the ID from text_mention, add them now
         if dispatcher_id:
-            self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
+            if company_info:
+                updated_dispatchers = list(company_info.get('dispatcher_user_ids', []))
+                if dispatcher_id not in updated_dispatchers:
+                    updated_dispatchers.append(dispatcher_id)
+                self.db.update_company_roles(
+                    company_id=company_info['company_id'],
+                    dispatcher_user_ids=updated_dispatchers
+                )
+                self.db.attach_group_to_company(
+                    group_id=group_info['group_id'],
+                    group_name=group_info['group_name'],
+                    company_id=company_info['company_id'],
+                    status='active'
+                )
+            else:
+                self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
+
             self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
             await update.message.reply_text(
                 f"✅ Added {dispatcher_handle} as a dispatcher for this group."
@@ -175,6 +419,78 @@ class BotHandlers:
                 f"⚠️ Added {dispatcher_handle} to the dispatcher list.\n"
                 f"They will be fully registered when they interact with the bot."
             )
+
+    async def add_group_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Platform-admin-only command to attach a group to a company."""
+        user = update.effective_user
+        if not self._is_platform_admin(user.id):
+            await self._send_error_message(update, "You are not authorized to use this command.")
+            return
+
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "Usage: /add_group <company_id> <group_id>\n"
+                "Example: /add_group 1 -1001234567890"
+            )
+            return
+
+        try:
+            company_id = int(context.args[0])
+            target_group_id = int(context.args[1])
+        except ValueError:
+            await self._send_error_message(update, "company_id and group_id must be integers.")
+            return
+
+        company = self.db.get_company_by_id(company_id)
+        if not company:
+            await self._send_error_message(update, f"Company {company_id} does not exist.")
+            return
+
+        group_record = self.db.get_group(target_group_id)
+        group_name = (
+            group_record['group_name']
+            if group_record and group_record.get('group_name')
+            else f"Group_{target_group_id}"
+        )
+
+        if not group_record:
+            try:
+                chat = await context.bot.get_chat(target_group_id)
+                if chat.title:
+                    group_name = chat.title
+            except TelegramError as exc:
+                logger.warning(f"Unable to fetch chat title for {target_group_id}: {exc}")
+
+        self.db.attach_group_to_company(
+            group_id=target_group_id,
+            group_name=group_name,
+            company_id=company_id,
+            status='active'
+        )
+
+        activation_message = (
+            f"✅ KPI bot activated for {company['name']}.\n"
+            f"Incidents can now be reported and triaged in this group."
+        )
+
+        notify_result = ""
+        try:
+            await context.bot.send_message(chat_id=target_group_id, text=activation_message)
+            notify_result = "Notification sent to group."
+        except TelegramError as exc:
+            notify_result = f"Failed to notify group: {exc}"
+            logger.error(f"Could not notify group {target_group_id} about activation: {exc}")
+
+        await update.message.reply_text(
+            f"Attached group {group_name} ({target_group_id}) to {company['name']}.\n{notify_result}"
+        )
+
+        self._log_audit_event(
+            "group_activation_completed",
+            company_id=company_id,
+            group_id=target_group_id,
+            activated_by=user.id
+        )
 
     async def register_driver_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /register_driver command."""
@@ -198,14 +514,11 @@ class BotHandlers:
         user = update.effective_user
         chat = update.effective_chat
 
-        # Check if group is configured
-        group = self.db.get_group(chat.id)
-        if not group:
-            await self._send_error_message(
-                update,
-                "This group is not configured. Please ask an admin to run /configure_managers first."
-            )
+        membership = await self._require_active_group(update, context)
+        if not membership:
             return
+
+        group_info = membership['group']
 
         # Parse issue description
         if not context.args:
@@ -246,7 +559,8 @@ class BotHandlers:
             group_id=chat.id,
             created_by_id=user.id,
             created_by_handle=user_handle,
-            description=description
+            description=description,
+            company_id=group_info.get('company_id')
         )
 
         # Get the incident to build the message
@@ -287,7 +601,6 @@ class BotHandlers:
     async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle all inline button callbacks."""
         query = update.callback_query
-        await query.answer()  # Acknowledge the callback
 
         callback_data = query.data
         user = update.effective_user
@@ -296,18 +609,22 @@ class BotHandlers:
         logger.info(f"Callback: {callback_data} from user {user.id} in chat {chat.id}")
 
         try:
+            membership = await self._require_active_group(update, context, chat)
+            if not membership:
+                return
+
             # Parse callback data
             action, incident_id = callback_data.split(':', 1)
 
             # Route to appropriate handler
             if action == 'claim_t1':
-                await self._handle_claim_t1(query, user, chat, incident_id)
+                await self._handle_claim_t1(query, user, chat, incident_id, membership)
             elif action == 'release_t1':
                 await self._handle_release_t1(query, user, chat, incident_id)
             elif action == 'escalate':
-                await self._handle_escalate(query, user, chat, incident_id, context)
+                await self._handle_escalate(query, user, chat, incident_id, context, membership)
             elif action == 'claim_t2':
-                await self._handle_claim_t2(query, user, chat, incident_id)
+                await self._handle_claim_t2(query, user, chat, incident_id, membership)
             elif action == 'resolve_t1':
                 await self._handle_resolve_t1(query, user, chat, incident_id, context)
             elif action == 'resolve_t2':
@@ -322,23 +639,33 @@ class BotHandlers:
             logger.error(f"Error handling callback: {e}", exc_info=True)
             await query.answer("An error occurred. Please try again.", show_alert=True)
 
-    async def _handle_claim_t1(self, query, user, chat, incident_id: str):
+    async def _handle_claim_t1(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 1 claim button."""
-        # Check authorization
-        group = self.db.get_group(chat.id)
-        if not group:
-            await query.answer("Group not configured", show_alert=True)
-            return
+        group_info = membership['group']
+        company_info = membership.get('company')
 
         # Auto-register user as dispatcher if they claim
         existing_user = self.db.get_user(user.id)
         if not existing_user:
             user_handle = self._get_user_handle(user)
             self.db.upsert_user(user.id, user_handle, 'Dispatcher')
-            self.db.add_dispatcher_to_group(chat.id, user.id)
+            if company_info:
+                self.db.add_dispatcher_to_company(company_info['company_id'], user.id)
+                self.db.attach_group_to_company(
+                    group_id=group_info['group_id'],
+                    group_name=group_info['group_name'],
+                    company_id=company_info['company_id'],
+                    status='active'
+                )
+            else:
+                self.db.add_dispatcher_to_group(chat.id, user.id)
 
         # Check if user is authorized dispatcher
-        if user.id not in group['dispatcher_user_ids']:
+        dispatcher_ids = self._collect_dispatcher_ids(membership)
+        if user.id not in dispatcher_ids:
+            logger.warning(
+                f"Unauthorized T1 claim attempt on {incident_id} by user {user.id} in chat {chat.id}"
+            )
             await query.answer(
                 "You are not authorized to claim issues. Please ask an admin to add you as a dispatcher.",
                 show_alert=True
@@ -355,6 +682,9 @@ class BotHandlers:
             text, keyboard = self.message_builder.build_claimed_t1_message(incident, user_handle)
 
             try:
+                logger.info(
+                    f"Updating incident {incident_id} message to claimed state by user {user.id}"
+                )
                 await query.edit_message_text(text, reply_markup=keyboard)
                 await query.answer("Incident claimed successfully!")
             except TelegramError as e:
@@ -373,15 +703,22 @@ class BotHandlers:
             text, keyboard = self.message_builder.build_unclaimed_message(incident)
 
             try:
+                logger.info(
+                    f"User {user.id} released T1 claim on {incident_id}, updating message"
+                )
                 await query.edit_message_text(text, reply_markup=keyboard)
                 await query.answer("Claim released")
             except TelegramError as e:
                 logger.error(f"Error editing message for {incident_id}: {e}")
                 await query.answer("Released, but couldn't update message.", show_alert=True)
         else:
+            logger.warning(
+                f"Failed T1 release attempt on {incident_id} by user {user.id}: {message}"
+            )
             await query.answer(message, show_alert=True)
 
-    async def _handle_escalate(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
+    async def _handle_escalate(self, query, user, chat, incident_id: str,
+                               context: ContextTypes.DEFAULT_TYPE, membership: Dict[str, Any]):
         """Handle Escalate button."""
         success, message = self.db.escalate_incident(incident_id, user.id)
 
@@ -391,14 +728,17 @@ class BotHandlers:
             user_handle = self._get_user_handle(user)
             text, keyboard = self.message_builder.build_escalated_message(incident, user_handle)
 
+            logger.info(
+                f"Incident {incident_id} escalated by user {user.id}; updating message and notifying managers"
+            )
             await query.edit_message_text(text, reply_markup=keyboard)
 
             # Send notification to managers
-            group = self.db.get_group(chat.id)
-            if group and group['manager_handles']:
+            manager_handles = self._collect_manager_handles(membership)
+            if manager_handles:
                 notification = self.message_builder.build_escalation_notification(
                     incident_id,
-                    group['manager_handles']
+                    manager_handles
                 )
                 await context.bot.send_message(
                     chat_id=chat.id,
@@ -408,15 +748,15 @@ class BotHandlers:
 
             await query.answer("Incident escalated to managers")
         else:
+            logger.warning(
+                f"Failed escalation attempt on {incident_id} by user {user.id}: {message}"
+            )
             await query.answer(message, show_alert=True)
 
-    async def _handle_claim_t2(self, query, user, chat, incident_id: str):
+    async def _handle_claim_t2(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 2 (Manager) claim button."""
-        # Check authorization
-        group = self.db.get_group(chat.id)
-        if not group:
-            await query.answer("Group not configured", show_alert=True)
-            return
+        group_info = membership['group']
+        company_info = membership.get('company')
 
         # Auto-register user as manager if they claim
         existing_user = self.db.get_user(user.id)
@@ -424,10 +764,23 @@ class BotHandlers:
 
         if not existing_user:
             self.db.upsert_user(user.id, user_handle, 'OpsManager')
-            self.db.add_manager_to_group(chat.id, user.id, user_handle)
+            if company_info:
+                self.db.add_manager_to_company(company_info['company_id'], user.id, user_handle)
+                self.db.attach_group_to_company(
+                    group_id=group_info['group_id'],
+                    group_name=group_info['group_name'],
+                    company_id=company_info['company_id'],
+                    status='active'
+                )
+            else:
+                self.db.add_manager_to_group(chat.id, user.id, user_handle)
 
         # Check if user is authorized manager
-        if user.id not in group['manager_user_ids']:
+        manager_ids = self._collect_manager_ids(membership)
+        if user.id not in manager_ids:
+            logger.warning(
+                f"Unauthorized T2 claim attempt on {incident_id} by user {user.id} in chat {chat.id}"
+            )
             await query.answer(
                 "You are not authorized to claim escalations. Please ask an admin to add you as a manager.",
                 show_alert=True
@@ -442,9 +795,15 @@ class BotHandlers:
             incident = self.db.get_incident(incident_id)
             text, keyboard = self.message_builder.build_claimed_t2_message(incident, user_handle)
 
+            logger.info(
+                f"Incident {incident_id} claimed by manager {user.id}; updating message"
+            )
             await query.edit_message_text(text, reply_markup=keyboard)
             await query.answer("Escalation claimed successfully!")
         else:
+            logger.warning(
+                f"Failed T2 claim attempt on {incident_id} by user {user.id}: {message}"
+            )
             await query.answer(message, show_alert=True)
 
     async def _handle_resolve_t1(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
@@ -457,12 +816,18 @@ class BotHandlers:
             user_handle = self._get_user_handle(user)
             text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
 
+            logger.info(
+                f"T1 resolve requested by user {user.id} for {incident_id}; awaiting summary"
+            )
             await query.edit_message_text(text)
 
             # Send request for resolution summary
             request_message = self.message_builder.build_resolution_request(
                 incident_id,
                 user_handle
+            )
+            logger.debug(
+                f"Prompting user {user.id} for summary on {incident_id} via follow-up message"
             )
             await context.bot.send_message(
                 chat_id=chat.id,
@@ -473,6 +838,9 @@ class BotHandlers:
             # Store the bot's message ID in context for later verification
             await query.answer("Please reply to the bot's message with your summary")
         else:
+            logger.warning(
+                f"Failed T1 resolve attempt on {incident_id} by user {user.id}: {message}"
+            )
             await query.answer(message, show_alert=True)
 
     async def _handle_resolve_t2(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
@@ -485,12 +853,18 @@ class BotHandlers:
             user_handle = self._get_user_handle(user)
             text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
 
+            logger.info(
+                f"T2 resolve requested by manager {user.id} for {incident_id}; awaiting summary"
+            )
             await query.edit_message_text(text)
 
             # Send request for resolution summary
             request_message = self.message_builder.build_resolution_request(
                 incident_id,
                 user_handle
+            )
+            logger.debug(
+                f"Prompting manager {user.id} for summary on {incident_id}"
             )
             await context.bot.send_message(
                 chat_id=chat.id,
@@ -500,6 +874,9 @@ class BotHandlers:
 
             await query.answer("Please reply to the bot's message with your summary")
         else:
+            logger.warning(
+                f"Failed T2 resolve attempt on {incident_id} by user {user.id}: {message}"
+            )
             await query.answer(message, show_alert=True)
 
     # ==================== Message Handler for Resolution Summary ====================
@@ -513,8 +890,19 @@ class BotHandlers:
             return
 
         # Check if replying to bot's message
-        if message.reply_to_message.from_user.id != context.bot.id:
+        bot_user_id = self._get_bot_user_id(context)
+        if not bot_user_id or message.reply_to_message.from_user.id != bot_user_id:
             return
+
+        chat = message.chat
+        group = self.db.get_group(chat.id) if chat and self._is_group_chat(chat) else None
+
+        # Registration replies take precedence for pending groups
+        if group and group.get('status') != 'active':
+            registration_message_id = group.get('registration_message_id')
+            if registration_message_id and registration_message_id == message.reply_to_message.message_id:
+                await self._handle_registration_reply(message, context, group)
+                return
 
         # Check if the bot's message is requesting a resolution
         bot_message_text = message.reply_to_message.text

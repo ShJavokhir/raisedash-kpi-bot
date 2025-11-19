@@ -23,8 +23,9 @@ nano .env
 # On Windows:
 notepad .env
 
-# Add your token:
+# Add your token and platform admins:
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+PLATFORM_ADMIN_IDS=123456789,987654321
 ```
 
 ## Step 3: Install Dependencies
@@ -57,15 +58,27 @@ python3 bot.py
    - Pin messages
    - Delete messages (optional)
 
-## Step 6: Configure the Group
+## Step 6: Register the Group with a Company
 
-In the group, send these commands:
+When the bot joins a group it immediately posts:
 
-```
-/configure_managers @alice @bob
-```
+> Please reply company name to this message to activate KPI bot in this group.
 
-This sets up who can handle escalated incidents.
+1. Reply to that message with the company name that owns the group.
+2. Every user ID listed in `PLATFORM_ADMIN_IDS` receives a DM containing the group ID, group title, requester, and requested company name.
+3. A platform admin must approve the connection from a private chat:
+
+   ```
+   /add_group <company_id> <group_id>
+   ```
+
+   This copies the company's dispatcher/manager settings into the group, marks it active, and sends a confirmation inside the group.
+
+Until approval is complete, all workflow commands/buttons respond with a “pending activation” notice.
+
+> Company records are provisioned via internal tooling or scripts using `Database.create_company`. Make sure the company exists before approving a group.
+
+Once a group is active, run `/configure_managers @alice @bob` inside any of the company's groups to update the company-wide escalation contacts.
 
 ## Step 7: Test It Out!
 
@@ -116,6 +129,7 @@ If you encounter issues:
 | `/add_dispatcher @user` | Add dispatcher (admin only) |
 | `/register_driver` | Register as driver |
 | `/new_issue <description>` | Create incident |
+| `/add_group <company_id> <group_id>` | Platform admin: activate group |
 
 ## Quick Reference - Workflow
 
