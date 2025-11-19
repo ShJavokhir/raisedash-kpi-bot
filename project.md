@@ -11,7 +11,7 @@ Enable logistics/operations teams to manage incidents efficiently with a two-tie
 ### Incident Management
 - **Two-Tier System**: Tier 1 (Dispatchers) handle standard issues, Tier 2 (Ops Managers) handle escalations
 - **Interactive Workflow**: Button-based interface (Claim → Work → Escalate/Resolve)
-- **Unique Incident IDs**: Format TKT-YYYY-NNNN for tracking
+- **Unique Incident IDs**: Simple sequential IDs (0001, 0002...) for tracking
 - **Message Pinning**: Auto-pin active incidents, unpin when resolved
 
 ### Safety & Reliability
