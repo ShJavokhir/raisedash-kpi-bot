@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Plus, Trash2, User } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, User, Search } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 interface DepartmentMember {
@@ -31,6 +31,7 @@ export default function DepartmentMembersPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [adding, setAdding] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   useEffect(() => {
     fetchMembers();
@@ -111,7 +112,18 @@ export default function DepartmentMembersPage() {
   };
 
   const memberUserIds = new Set(members.map(m => m.user_id));
-  const usersToAdd = availableUsers.filter(u => !memberUserIds.has(u.user_id));
+  let usersToAdd = availableUsers.filter(u => !memberUserIds.has(u.user_id));
+
+  // Filter users based on search query
+  if (userSearchQuery.trim()) {
+    const query = userSearchQuery.toLowerCase();
+    usersToAdd = usersToAdd.filter(user => {
+      const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
+      const username = (user.username || '').toLowerCase();
+      const userId = user.user_id.toString();
+      return fullName.includes(query) || username.includes(query) || userId.includes(query);
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -188,11 +200,14 @@ export default function DepartmentMembersPage() {
                           <User className="h-5 w-5 text-indigo-600" />
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
+                          <Link
+                            href={`/dashboard/users/${member.user_id}`}
+                            className="text-sm font-medium text-gray-900 hover:text-indigo-600 hover:underline"
+                          >
                             {member.first_name || member.last_name
                               ? `${member.first_name || ''} ${member.last_name || ''}`.trim()
                               : `User ${member.user_id}`}
-                          </div>
+                          </Link>
                         </div>
                       </div>
                     </td>
@@ -230,23 +245,48 @@ export default function DepartmentMembersPage() {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Add Member</h3>
             <form onSubmit={handleAddMember}>
               <div className="mb-4">
+                <label htmlFor="user-search" className="block text-sm font-medium text-gray-700 mb-2">
+                  Search Users
+                </label>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    id="user-search"
+                    type="text"
+                    placeholder="Search by name, username, or ID..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <div className="mb-4">
                 <label htmlFor="user" className="block text-sm font-medium text-gray-700 mb-2">
-                  Select User
+                  Select User ({usersToAdd.length} available)
                 </label>
                 <select
                   id="user"
                   required
                   value={selectedUserId}
                   onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 max-h-48 overflow-y-auto"
+                  size={Math.min(usersToAdd.length + 1, 8)}
                 >
                   <option value="">Select a user...</option>
                   {usersToAdd.map((user) => (
                     <option key={user.user_id} value={user.user_id}>
-                      {user.first_name || user.username || `User ${user.user_id}`}
+                      {user.first_name || user.last_name
+                        ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
+                        : user.username || `User ${user.user_id}`}
+                      {user.username && ` (@${user.username})`}
                     </option>
                   ))}
                 </select>
+                {usersToAdd.length === 0 && (
+                  <p className="mt-2 text-sm text-gray-500">
+                    {userSearchQuery ? 'No users match your search.' : 'All users are already members.'}
+                  </p>
+                )}
               </div>
               <div className="flex justify-end gap-3">
                 <button
@@ -254,6 +294,7 @@ export default function DepartmentMembersPage() {
                   onClick={() => {
                     setShowAddModal(false);
                     setSelectedUserId('');
+                    setUserSearchQuery('');
                   }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
                   disabled={adding}
@@ -262,7 +303,7 @@ export default function DepartmentMembersPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={adding}
+                  disabled={adding || usersToAdd.length === 0}
                   className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {adding ? 'Adding...' : 'Add Member'}
