@@ -90,14 +90,14 @@ export default function ReportFilters({
     value.statuses.length;
 
   return (
-    <div className="tech-border bg-paper p-4">
+    <div className="tech-border bg-white p-4">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center gap-2 text-ink hover:text-subtle transition-colors"
+          className="flex items-center gap-2 text-neutral-900 hover:text-neutral-600 transition-colors"
         >
-          <span className="section-tag">FILTERS</span>
+          <span className="section-tag">Filters</span>
           {hasActiveFilters && (
             <span className="px-2 py-0.5 tech-border text-xs font-mono">
               {activeFiltersCount} active
@@ -109,7 +109,7 @@ export default function ReportFilters({
         {hasActiveFilters && (
           <button
             onClick={handleClearAll}
-            className="text-xs font-mono uppercase tracking-wider text-subtle hover:text-ink transition-colors"
+            className="text-[10px] font-mono uppercase tracking-wider text-neutral-500 hover:text-neutral-900 transition-colors"
           >
             Clear All
           </button>
@@ -122,19 +122,19 @@ export default function ReportFilters({
           {/* Department Filter */}
           {showDepartments && availableDepartments.length > 0 && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
                 Departments ({value.departmentIds.length} selected)
               </label>
               <div className="max-h-40 overflow-y-auto tech-border p-2 space-y-1">
                 {availableDepartments.map((dept) => (
-                  <label key={dept.department_id} className="flex items-center gap-2 cursor-pointer hover:bg-subtle p-1">
+                  <label key={dept.department_id} className="flex items-center gap-2 cursor-pointer hover:bg-neutral-50 p-1">
                     <input
                       type="checkbox"
                       checked={value.departmentIds.includes(String(dept.department_id))}
                       onChange={() => handleMultiSelectChange('departmentIds', String(dept.department_id))}
                       className="w-4 h-4"
                     />
-                    <span className="text-sm font-mono">{dept.name}</span>
+                    <span className="text-xs font-mono text-neutral-900">{dept.name}</span>
                   </label>
                 ))}
               </div>
@@ -144,21 +144,21 @@ export default function ReportFilters({
           {/* User Filter */}
           {showUsers && availableUsers.length > 0 && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
                 Users ({value.userIds.length} selected)
               </label>
               <div className="max-h-40 overflow-y-auto tech-border p-2 space-y-1">
                 {availableUsers.map((user) => (
-                  <label key={user.user_id} className="flex items-center gap-2 cursor-pointer hover:bg-subtle p-1">
+                  <label key={user.user_id} className="flex items-center gap-2 cursor-pointer hover:bg-neutral-50 p-1">
                     <input
                       type="checkbox"
                       checked={value.userIds.includes(String(user.user_id))}
                       onChange={() => handleMultiSelectChange('userIds', String(user.user_id))}
                       className="w-4 h-4"
                     />
-                    <span className="text-sm font-mono">{getUserDisplayName(user)}</span>
+                    <span className="text-xs font-mono text-neutral-900">{getUserDisplayName(user)}</span>
                     {user.username && (
-                      <span className="text-xs text-subtle">@{user.username}</span>
+                      <span className="text-[10px] text-neutral-500">@{user.username}</span>
                     )}
                   </label>
                 ))}
@@ -169,19 +169,19 @@ export default function ReportFilters({
           {/* Group Filter */}
           {showGroups && availableGroups.length > 0 && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
                 Groups ({value.groupIds.length} selected)
               </label>
               <div className="max-h-40 overflow-y-auto tech-border p-2 space-y-1">
                 {availableGroups.map((group) => (
-                  <label key={group.group_id} className="flex items-center gap-2 cursor-pointer hover:bg-subtle p-1">
+                  <label key={group.group_id} className="flex items-center gap-2 cursor-pointer hover:bg-neutral-50 p-1">
                     <input
                       type="checkbox"
                       checked={value.groupIds.includes(String(group.group_id))}
                       onChange={() => handleMultiSelectChange('groupIds', String(group.group_id))}
                       className="w-4 h-4"
                     />
-                    <span className="text-sm font-mono">{group.group_name}</span>
+                    <span className="text-xs font-mono text-neutral-900">{group.group_name}</span>
                   </label>
                 ))}
               </div>
@@ -191,19 +191,19 @@ export default function ReportFilters({
           {/* Status Filter */}
           {showStatuses && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
                 Status ({value.statuses.length} selected)
               </label>
               <div className="tech-border p-2 space-y-1">
                 {INCIDENT_STATUSES.map((status) => (
-                  <label key={status} className="flex items-center gap-2 cursor-pointer hover:bg-subtle p-1">
+                  <label key={status} className="flex items-center gap-2 cursor-pointer hover:bg-neutral-50 p-1">
                     <input
                       type="checkbox"
                       checked={value.statuses.includes(status)}
                       onChange={() => handleMultiSelectChange('statuses', status)}
                       className="w-4 h-4"
                     />
-                    <span className="text-sm font-mono">{status.replace(/_/g, ' ')}</span>
+                    <span className="text-xs font-mono text-neutral-900">{status.replace(/_/g, ' ')}</span>
                   </label>
                 ))}
               </div>

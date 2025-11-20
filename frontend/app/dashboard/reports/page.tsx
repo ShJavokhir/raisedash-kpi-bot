@@ -169,18 +169,15 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-paper p-6 space-y-6">
+    <div className="space-y-8">
       {/* Header */}
-      <div className="tech-border bg-paper p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="section-header mb-2">
-              <span className="section-tag">KPI REPORTS</span>
-              <div className="flex-1 h-px bg-border ml-4"></div>
-            </div>
-            <p className="text-sm text-subtle font-mono mt-2">
-              Comprehensive incident reporting and analytics
-            </p>
+      <div className="border-b-2 border-neutral-800 pb-4">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-neutral-900"></div>
+            <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+              KPI <span className="font-light text-neutral-500">Reports</span>
+            </h1>
           </div>
 
           <div className="flex gap-2">
@@ -200,20 +197,23 @@ export default function ReportsPage() {
             </button>
           </div>
         </div>
+        <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
+          Comprehensive incident reporting and analytics
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Left Sidebar - Configuration */}
         <div className="lg:col-span-1 space-y-4">
           {/* Report Type Selector */}
-          <div className="tech-border bg-paper p-4">
-            <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-3">
+          <div className="tech-border bg-white p-4">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-3">
               Report Type
             </label>
             <select
               value={reportType}
               onChange={(e) => setReportType(e.target.value as ReportType)}
-              className="w-full px-3 py-2 tech-border bg-paper text-ink font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ink"
+              className="w-full px-3 py-2 tech-border bg-white text-neutral-900 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
             >
               <option value="department">Department Performance</option>
               <option value="user">User Performance</option>
@@ -224,7 +224,7 @@ export default function ReportsPage() {
 
             {/* Report Type Description */}
             <div className="mt-3 pt-3 tech-border-t">
-              <p className="text-xs text-subtle font-mono leading-relaxed">
+              <p className="text-[10px] text-neutral-500 font-mono leading-relaxed">
                 {reportType === 'department' && 'Analyze department performance metrics, resolution times, and workload distribution.'}
                 {reportType === 'user' && 'Track individual user performance, productivity scores, and activity patterns.'}
                 {reportType === 'sla' && 'Monitor SLA compliance rates, violations, and response time metrics.'}
@@ -235,7 +235,7 @@ export default function ReportsPage() {
           </div>
 
           {/* Date Range Selector */}
-          <div className="tech-border bg-paper p-4">
+          <div className="tech-border bg-white p-4">
             <DateRangeSelector
               value={dateRange}
               timezone={timezone}
@@ -261,16 +261,18 @@ export default function ReportsPage() {
         {/* Main Content Area - Report Display */}
         <div className="lg:col-span-3">
           {loading && (
-            <div className="tech-border bg-paper p-12 text-center">
-              <div className="inline-block w-8 h-8 border-2 border-ink border-t-transparent rounded-full animate-spin"></div>
-              <p className="mt-4 text-sm font-mono text-subtle">Loading report data...</p>
+            <div className="flex items-center justify-center h-64">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+                <span className="text-xs uppercase tracking-wider text-neutral-500">Loading Report Data...</span>
+              </div>
             </div>
           )}
 
           {error && (
-            <div className="tech-border bg-paper p-6 border-2 border-red-500">
-              <div className="section-tag bg-red-500 text-white">ERROR</div>
-              <p className="mt-3 text-sm font-mono text-ink">{error}</p>
+            <div className="tech-border bg-white p-6">
+              <span className="text-xs uppercase tracking-wider text-red-600">Error Loading Report</span>
+              <p className="mt-2 text-sm text-neutral-600">{error}</p>
             </div>
           )}
 
@@ -285,10 +287,8 @@ export default function ReportsPage() {
           )}
 
           {!loading && !error && !reportData && (
-            <div className="tech-border bg-paper p-12 text-center">
-              <p className="text-sm font-mono text-subtle">
-                Configure your report settings and click Generate Report
-              </p>
+            <div className="tech-border bg-white p-6">
+              <span className="text-xs uppercase tracking-wider text-neutral-500">Configure Report Settings</span>
             </div>
           )}
         </div>
@@ -300,63 +300,57 @@ export default function ReportsPage() {
 // Department Report Component
 function DepartmentReport({ data }: { data: any }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {data.summary?.slice(0, 4).map((dept: any, idx: number) => (
-          <div key={idx} className="tech-card p-4">
-            <div className="text-xs uppercase tracking-wider text-subtle mb-2">
-              {dept.department_name}
+      <div>
+        <div className="section-header mb-4">
+          <div className="section-tag">Department Overview</div>
+          <div className="h-[1px] bg-neutral-300 flex-grow ml-4"></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {data.summary?.slice(0, 4).map((dept: any, idx: number) => (
+            <div key={idx} className="tech-border bg-white/50 p-4 tech-card min-h-[120px] flex flex-col">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                  {dept.department_name}
+                </span>
+              </div>
+              <div className="mt-auto">
+                <div className="text-3xl font-light tracking-tighter text-neutral-900 mb-1">
+                  {dept.total_incidents}
+                </div>
+                <p className="text-[10px] text-neutral-400 uppercase tracking-wide">Total Incidents</p>
+              </div>
             </div>
-            <div className="text-2xl font-bold font-mono text-ink">
-              {dept.total_incidents}
-            </div>
-            <div className="text-xs text-subtle mt-1">Total Incidents</div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* Department Performance Table */}
-      <div className="tech-border bg-paper p-6">
+      <div className="tech-border bg-white p-4">
         <div className="section-header mb-4">
-          <span className="section-tag">DEPARTMENT METRICS</span>
-          <div className="flex-1 h-px bg-border ml-4"></div>
+          <div className="section-tag">Department Metrics</div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full font-mono text-sm">
-            <thead>
-              <tr className="tech-border-b">
-                <th className="text-left py-2 px-3 font-bold uppercase tracking-wider">Department</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Total</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Resolved</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Avg Time</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">SLA %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.summary?.map((dept: any, idx: number) => (
-                <tr key={idx} className="tech-border-b hover:bg-subtle">
-                  <td className="py-2 px-3">{dept.department_name}</td>
-                  <td className="text-right py-2 px-3">{dept.total_incidents}</td>
-                  <td className="text-right py-2 px-3">{dept.resolved_incidents}</td>
-                  <td className="text-right py-2 px-3">
-                    {formatMinutesToDuration(dept.avg_resolution_time_seconds / 60)}
-                  </td>
-                  <td className="text-right py-2 px-3">{dept.resolution_sla_compliance_rate}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2">
+          {data.summary?.map((dept: any, idx: number) => (
+            <div key={idx} className="flex items-center justify-between py-2 tech-border-b last:border-0">
+              <span className="text-xs uppercase tracking-wider text-neutral-600">{dept.department_name}</span>
+              <div className="flex items-center gap-4">
+                <span className="text-[10px] text-neutral-500 font-mono">{dept.resolved_incidents} resolved</span>
+                <span className="text-[10px] text-neutral-500 font-mono">{formatMinutesToDuration(dept.avg_resolution_time_seconds / 60)}</span>
+                <span className="text-xs font-bold text-neutral-900 font-mono">{dept.total_incidents}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
       {/* Resolution Time Distribution Chart */}
       {data.resolutionTimeDistribution && data.resolutionTimeDistribution.length > 0 && (
-        <div className="tech-border bg-paper p-6">
+        <div className="tech-border bg-white p-4">
           <div className="section-header mb-4">
-            <span className="section-tag">RESOLUTION TIME DISTRIBUTION</span>
-            <div className="flex-1 h-px bg-border ml-4"></div>
+            <div className="section-tag">Resolution Time Distribution</div>
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
@@ -377,43 +371,32 @@ function DepartmentReport({ data }: { data: any }) {
 // User Report Component
 function UserReport({ data }: { data: any }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Leaderboard */}
-      <div className="tech-border bg-paper p-6">
+      <div className="tech-border bg-white p-4">
         <div className="section-header mb-4">
-          <span className="section-tag">USER LEADERBOARD</span>
-          <div className="flex-1 h-px bg-border ml-4"></div>
+          <div className="section-tag">User Leaderboard</div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full font-mono text-sm">
-            <thead>
-              <tr className="tech-border-b">
-                <th className="text-left py-2 px-3 font-bold uppercase tracking-wider">Rank</th>
-                <th className="text-left py-2 px-3 font-bold uppercase tracking-wider">User</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Resolved</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Active Time</th>
-                <th className="text-right py-2 px-3 font-bold uppercase tracking-wider">Score</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.summary?.map((user: any, idx: number) => (
-                <tr key={idx} className="tech-border-b hover:bg-subtle">
-                  <td className="py-2 px-3">#{user.overall_rank}</td>
-                  <td className="py-2 px-3">
-                    {user.first_name || user.last_name
-                      ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
-                      : user.username || 'Unknown'}
-                  </td>
-                  <td className="text-right py-2 px-3">{user.incidents_resolved_self}</td>
-                  <td className="text-right py-2 px-3">
-                    {formatMinutesToDuration(user.total_active_seconds / 60)}
-                  </td>
-                  <td className="text-right py-2 px-3 font-bold">{user.productivity_score}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2">
+          {data.summary?.map((user: any, idx: number) => (
+            <div key={idx} className="flex items-center justify-between py-2 tech-border-b last:border-0">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono text-neutral-400 w-6">#{user.overall_rank}</span>
+                <span className="text-xs uppercase tracking-wider text-neutral-900">
+                  {user.first_name || user.last_name
+                    ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
+                    : user.username || 'Unknown'}
+                </span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="text-[10px] text-neutral-500 font-mono">{formatMinutesToDuration(user.total_active_seconds / 60)}</span>
+                <span className="text-xs font-bold text-neutral-900 font-mono">
+                  {user.incidents_resolved_self}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -425,47 +408,70 @@ function SLAReport({ data }: { data: any }) {
   const overallCompliance = data.overallCompliance;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* SLA Compliance Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="tech-card p-4">
-          <div className="text-xs uppercase tracking-wider text-subtle mb-2">Claim SLA</div>
-          <div className="text-3xl font-bold font-mono text-ink">
-            {overallCompliance?.claim_sla_compliance_rate || 0}%
-          </div>
-          <div className="text-xs text-subtle mt-1">Compliance Rate</div>
+      <div>
+        <div className="section-header mb-4">
+          <div className="section-tag">SLA Overview</div>
+          <div className="h-[1px] bg-neutral-300 flex-grow ml-4"></div>
         </div>
-
-        <div className="tech-card p-4">
-          <div className="text-xs uppercase tracking-wider text-subtle mb-2">Resolution SLA</div>
-          <div className="text-3xl font-bold font-mono text-ink">
-            {overallCompliance?.resolution_sla_compliance_rate || 0}%
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="tech-border bg-white/50 p-4 tech-card min-h-[120px] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">Claim SLA</span>
+            </div>
+            <div className="mt-auto">
+              <div className="text-3xl font-light tracking-tighter text-neutral-900 mb-1">
+                {overallCompliance?.claim_sla_compliance_rate || 0}%
+              </div>
+              <p className="text-[10px] text-neutral-400 uppercase tracking-wide">Compliance Rate</p>
+            </div>
           </div>
-          <div className="text-xs text-subtle mt-1">Compliance Rate</div>
-        </div>
 
-        <div className="tech-card p-4">
-          <div className="text-xs uppercase tracking-wider text-subtle mb-2">Avg Time to Claim</div>
-          <div className="text-2xl font-bold font-mono text-ink">
-            {formatMinutesToDuration(overallCompliance?.avg_time_to_claim_minutes)}
+          <div className="tech-border bg-white/50 p-4 tech-card min-h-[120px] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">Resolution SLA</span>
+            </div>
+            <div className="mt-auto">
+              <div className="text-3xl font-light tracking-tighter text-neutral-900 mb-1">
+                {overallCompliance?.resolution_sla_compliance_rate || 0}%
+              </div>
+              <p className="text-[10px] text-neutral-400 uppercase tracking-wide">Compliance Rate</p>
+            </div>
           </div>
-        </div>
 
-        <div className="tech-card p-4">
-          <div className="text-xs uppercase tracking-wider text-subtle mb-2">SLA Violations</div>
-          <div className="text-2xl font-bold font-mono text-ink">
-            {(overallCompliance?.claim_sla_violations || 0) +
-              (overallCompliance?.resolution_sla_violations || 0)}
+          <div className="tech-border bg-white/50 p-4 tech-card min-h-[120px] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">Avg Time to Claim</span>
+            </div>
+            <div className="mt-auto">
+              <div className="text-3xl font-light tracking-tighter text-neutral-900 mb-1">
+                {formatMinutesToDuration(overallCompliance?.avg_time_to_claim_minutes)}
+              </div>
+              <p className="text-[10px] text-neutral-400 uppercase tracking-wide">Mean Time</p>
+            </div>
+          </div>
+
+          <div className="tech-border bg-white/50 p-4 tech-card min-h-[120px] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">SLA Violations</span>
+            </div>
+            <div className="mt-auto">
+              <div className="text-3xl font-light tracking-tighter text-neutral-900 mb-1">
+                {(overallCompliance?.claim_sla_violations || 0) +
+                  (overallCompliance?.resolution_sla_violations || 0)}
+              </div>
+              <p className="text-[10px] text-neutral-400 uppercase tracking-wide">Total Count</p>
+            </div>
           </div>
         </div>
       </div>
 
       {/* SLA Trends Chart */}
       {data.trends && data.trends.length > 0 && (
-        <div className="tech-border bg-paper p-6">
+        <div className="tech-border bg-white p-4">
           <div className="section-header mb-4">
-            <span className="section-tag">SLA COMPLIANCE TRENDS</span>
-            <div className="flex-1 h-px bg-border ml-4"></div>
+            <div className="section-tag">SLA Compliance Trends</div>
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
@@ -488,13 +494,12 @@ function SLAReport({ data }: { data: any }) {
 // Trends Report Component
 function TrendsReport({ data }: { data: any }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Volume Trends */}
       {data.volumeTrends && data.volumeTrends.length > 0 && (
-        <div className="tech-border bg-paper p-6">
+        <div className="tech-border bg-white p-4">
           <div className="section-header mb-4">
-            <span className="section-tag">INCIDENT VOLUME TRENDS</span>
-            <div className="flex-1 h-px bg-border ml-4"></div>
+            <div className="section-tag">Incident Volume Trends</div>
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
@@ -513,10 +518,9 @@ function TrendsReport({ data }: { data: any }) {
 
       {/* Backlog Analysis */}
       {data.backlogAnalysis && data.backlogAnalysis.length > 0 && (
-        <div className="tech-border bg-paper p-6">
+        <div className="tech-border bg-white p-4">
           <div className="section-header mb-4">
-            <span className="section-tag">BACKLOG ANALYSIS</span>
-            <div className="flex-1 h-px bg-border ml-4"></div>
+            <div className="section-tag">Backlog Analysis</div>
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
@@ -553,49 +557,48 @@ function ComparativeReport({ data }: { data: any }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Period Information */}
-      <div className="tech-border bg-paper p-4">
+      <div className="tech-border bg-white p-4">
         <div className="grid grid-cols-2 gap-4 text-sm font-mono">
           <div>
-            <div className="text-xs uppercase tracking-wider text-subtle mb-1">Period 1</div>
-            <div className="text-ink">{data.metadata.period1.startDate} to {data.metadata.period1.endDate}</div>
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-1">Period 1</div>
+            <div className="text-neutral-900">{data.metadata.period1.startDate} to {data.metadata.period1.endDate}</div>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wider text-subtle mb-1">Period 2</div>
-            <div className="text-ink">{data.metadata.period2.startDate} to {data.metadata.period2.endDate}</div>
+            <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-1">Period 2</div>
+            <div className="text-neutral-900">{data.metadata.period2.startDate} to {data.metadata.period2.endDate}</div>
           </div>
         </div>
       </div>
 
       {/* Metrics Comparison */}
-      <div className="tech-border bg-paper p-6">
+      <div className="tech-border bg-white p-4">
         <div className="section-header mb-4">
-          <span className="section-tag">METRICS COMPARISON</span>
-          <div className="flex-1 h-px bg-border ml-4"></div>
+          <div className="section-tag">Metrics Comparison</div>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-2">
           {metrics && Object.entries(metrics).map(([key, value]: [string, any]) => (
-            <div key={key} className="tech-border p-4">
+            <div key={key} className="py-3 tech-border-b last:border-0">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-bold uppercase tracking-wider text-ink">
+                <span className="text-xs uppercase tracking-wider text-neutral-600">
                   {key.replace(/_/g, ' ')}
-                </div>
+                </span>
                 {getChangeIndicator(value.change)}
               </div>
               <div className="grid grid-cols-3 gap-4 text-sm font-mono">
                 <div>
-                  <div className="text-xs text-subtle mb-1">Period 1</div>
-                  <div className="text-lg font-bold">{typeof value.period1 === 'number' ? value.period1.toFixed(2) : value.period1}</div>
+                  <div className="text-[10px] text-neutral-500 mb-1">Period 1</div>
+                  <div className="text-lg font-bold text-neutral-900">{typeof value.period1 === 'number' ? value.period1.toFixed(2) : value.period1}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-subtle mb-1">Period 2</div>
-                  <div className="text-lg font-bold">{typeof value.period2 === 'number' ? value.period2.toFixed(2) : value.period2}</div>
+                  <div className="text-[10px] text-neutral-500 mb-1">Period 2</div>
+                  <div className="text-lg font-bold text-neutral-900">{typeof value.period2 === 'number' ? value.period2.toFixed(2) : value.period2}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-subtle mb-1">Change</div>
-                  <div className="text-lg font-bold">{typeof value.change.value === 'number' ? value.change.value.toFixed(2) : value.change.value}</div>
+                  <div className="text-[10px] text-neutral-500 mb-1">Change</div>
+                  <div className="text-lg font-bold text-neutral-900">{typeof value.change.value === 'number' ? value.change.value.toFixed(2) : value.change.value}</div>
                 </div>
               </div>
             </div>

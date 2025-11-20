@@ -95,13 +95,13 @@ export default function DateRangeSelector({
     <div className="space-y-4">
       {/* Date Preset Selector */}
       <div>
-        <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
           Date Range
         </label>
         <select
           value={selectedPreset}
           onChange={(e) => handlePresetChange(e.target.value as DatePreset)}
-          className="w-full px-3 py-2 tech-border bg-paper text-ink font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ink"
+          className="w-full px-3 py-2 tech-border bg-white text-neutral-900 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
         >
           {DATE_PRESETS.map((preset) => (
             <option key={preset} value={preset}>
@@ -115,7 +115,7 @@ export default function DateRangeSelector({
       {selectedPreset === 'custom' && (
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
               Start Date
             </label>
             <input
@@ -123,11 +123,11 @@ export default function DateRangeSelector({
               value={customStartDate}
               onChange={(e) => setCustomStartDate(e.target.value)}
               onBlur={handleCustomDateChange}
-              className="w-full px-3 py-2 tech-border bg-paper text-ink font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ink"
+              className="w-full px-3 py-2 tech-border bg-white text-neutral-900 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
             />
           </div>
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
               End Date
             </label>
             <input
@@ -135,7 +135,7 @@ export default function DateRangeSelector({
               value={customEndDate}
               onChange={(e) => setCustomEndDate(e.target.value)}
               onBlur={handleCustomDateChange}
-              className="w-full px-3 py-2 tech-border bg-paper text-ink font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ink"
+              className="w-full px-3 py-2 tech-border bg-white text-neutral-900 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
             />
           </div>
         </div>
@@ -144,13 +144,13 @@ export default function DateRangeSelector({
       {/* Timezone Selector */}
       {showTimezone && (
         <div>
-          <label className="block text-xs font-bold uppercase tracking-wider text-ink mb-2">
+          <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
             Timezone
           </label>
           <select
             value={selectedTimezone}
             onChange={(e) => handleTimezoneChange(e.target.value)}
-            className="w-full px-3 py-2 tech-border bg-paper text-ink font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ink"
+            className="w-full px-3 py-2 tech-border bg-white text-neutral-900 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
           >
             {COMMON_TIMEZONES.map((tz) => (
               <option key={tz.value} value={tz.value}>
@@ -163,10 +163,10 @@ export default function DateRangeSelector({
 
       {/* Selected Range Display */}
       <div className="pt-2 tech-border-t">
-        <div className="text-xs uppercase tracking-wider text-subtle mb-1">Selected Range:</div>
-        <div className="text-sm font-mono text-ink">{formatDateRange(value)}</div>
+        <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-1">Selected Range:</div>
+        <div className="text-xs font-mono text-neutral-900">{formatDateRange(value)}</div>
         {showTimezone && (
-          <div className="text-xs font-mono text-subtle mt-1">{selectedTimezone}</div>
+          <div className="text-[10px] font-mono text-neutral-500 mt-1">{selectedTimezone}</div>
         )}
       </div>
     </div>
