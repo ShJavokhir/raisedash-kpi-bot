@@ -414,6 +414,31 @@ class Database:
         # Seed default departments for legacy companies
         self._seed_default_departments(cursor)
 
+        # Create company_access_keys table for web UI authentication
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS company_access_keys (
+                access_key_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                access_key TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                created_by_user_id INTEGER,
+                expires_at TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_used_at TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (company_id) REFERENCES companies(company_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_company_access_keys_company
+            ON company_access_keys(company_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_company_access_keys_active
+            ON company_access_keys(is_active, expires_at)
+        """)
+
     def _migrate_incidents_table(self, cursor, get_columns):
         """Rebuild incidents table with department-aware schema."""
         columns = get_columns('incidents')
@@ -986,6 +1011,148 @@ class Database:
             'company': company,
             'is_active': group['status'] == 'active'
         }
+
+    # ==================== Company Access Keys Management ====================
+
+    @sentry_trace("create_access_key")
+    def create_access_key(self, company_id: int, access_key: str,
+                          description: str = None, created_by_user_id: int = None,
+                          expires_at: str = None) -> int:
+        """Create a new access key for a company.
+
+        Args:
+            company_id: The company to grant access to
+            access_key: The secret access key (should be generated securely)
+            description: Optional description (e.g., "Admin Dashboard Access")
+            created_by_user_id: Optional platform admin who created this key
+            expires_at: Optional expiration timestamp (ISO format)
+
+        Returns:
+            access_key_id
+        """
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                now = utc_iso_now()
+                cursor.execute("""
+                    INSERT INTO company_access_keys
+                    (company_id, access_key, description, created_at,
+                     created_by_user_id, expires_at, is_active, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, '{}')
+                """, (company_id, access_key, description, now, created_by_user_id, expires_at))
+                access_key_id = cursor.lastrowid
+                logger.info(f"Created access key {access_key_id} for company {company_id}")
+                return access_key_id
+
+    @sentry_trace("validate_access_key")
+    def validate_access_key(self, access_key: str) -> Optional[Dict[str, Any]]:
+        """Validate an access key and return company info if valid.
+
+        Args:
+            access_key: The access key to validate
+
+        Returns:
+            Dict with company_id, company_name, access_key_id if valid, None otherwise
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    ak.access_key_id,
+                    ak.company_id,
+                    ak.is_active,
+                    ak.expires_at,
+                    c.name as company_name
+                FROM company_access_keys ak
+                JOIN companies c ON ak.company_id = c.company_id
+                WHERE ak.access_key = ?
+            """, (access_key,))
+            row = cursor.fetchone()
+
+            if not row:
+                logger.warning(f"Access key validation failed: key not found")
+                return None
+
+            if not row['is_active']:
+                logger.warning(f"Access key validation failed: key is inactive")
+                return None
+
+            # Check expiration
+            if row['expires_at']:
+                from datetime import datetime
+                expires_at = datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00'))
+                if utc_now() > expires_at:
+                    logger.warning(f"Access key validation failed: key expired")
+                    return None
+
+            # Update last_used_at
+            self._update_access_key_last_used(row['access_key_id'])
+
+            logger.info(f"Access key validated successfully for company {row['company_id']}")
+            return {
+                'access_key_id': row['access_key_id'],
+                'company_id': row['company_id'],
+                'company_name': row['company_name']
+            }
+
+    def _update_access_key_last_used(self, access_key_id: int):
+        """Update the last_used_at timestamp for an access key."""
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE company_access_keys
+                    SET last_used_at = ?
+                    WHERE access_key_id = ?
+                """, (utc_iso_now(), access_key_id))
+
+    @sentry_trace("list_company_access_keys")
+    def list_company_access_keys(self, company_id: int) -> List[Dict[str, Any]]:
+        """List all access keys for a company."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    access_key_id,
+                    company_id,
+                    access_key,
+                    description,
+                    created_at,
+                    created_by_user_id,
+                    expires_at,
+                    is_active,
+                    last_used_at,
+                    metadata
+                FROM company_access_keys
+                WHERE company_id = ?
+                ORDER BY created_at DESC
+            """, (company_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    @sentry_trace("revoke_access_key")
+    def revoke_access_key(self, access_key_id: int):
+        """Revoke (deactivate) an access key."""
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE company_access_keys
+                    SET is_active = 0
+                    WHERE access_key_id = ?
+                """, (access_key_id,))
+                logger.info(f"Revoked access key {access_key_id}")
+
+    @sentry_trace("delete_access_key")
+    def delete_access_key(self, access_key_id: int):
+        """Permanently delete an access key."""
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM company_access_keys
+                    WHERE access_key_id = ?
+                """, (access_key_id,))
+                logger.info(f"Deleted access key {access_key_id}")
 
     # ==================== Group Management ====================
 
