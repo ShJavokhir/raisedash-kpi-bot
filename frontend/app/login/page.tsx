@@ -38,54 +38,83 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-2xl shadow-xl">
-        <div>
-          <h2 className="text-center text-3xl font-bold text-gray-900">
-            KPI Dashboard
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Enter your company access key to continue
+    <div className="min-h-screen flex items-center justify-center bg-noise">
+      <div className="max-w-md w-full space-y-6">
+        {/* Header */}
+        <div className="border-b-2 border-neutral-800 pb-4 mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-3 h-3 bg-neutral-900"></div>
+            <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+              Raisedash <span className="font-light text-neutral-500">KPI</span>
+            </h1>
+          </div>
+          <p className="text-xs text-neutral-500 pl-5 uppercase tracking-wider">
+            Access Control System
           </p>
         </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="access-key" className="sr-only">
-              Access Key
-            </label>
-            <input
-              id="access-key"
-              name="access-key"
-              type="text"
-              required
-              className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:z-10 sm:text-sm"
-              placeholder="Enter your access key"
-              value={accessKey}
-              onChange={(e) => setAccessKey(e.target.value)}
-              disabled={loading}
-            />
+        {/* Login Card */}
+        <div className="tech-border bg-white/50 p-6">
+          <div className="section-header mb-6">
+            <div className="section-tag">Authentication</div>
+            <div className="h-[1px] bg-neutral-300 flex-grow ml-4"></div>
           </div>
 
-          {error && (
-            <div className="rounded-lg bg-red-50 p-4">
-              <p className="text-sm text-red-800">{error}</p>
+          <form className="space-y-6" onSubmit={handleSubmit}>
+            <div>
+              <label htmlFor="access-key" className="block text-xs uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                Access Key
+              </label>
+              <input
+                id="access-key"
+                name="access-key"
+                type="text"
+                required
+                className="tech-input w-full"
+                placeholder="ENTER YOUR ACCESS KEY"
+                value={accessKey}
+                onChange={(e) => setAccessKey(e.target.value)}
+                disabled={loading}
+              />
             </div>
-          )}
 
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? 'Logging in...' : 'Sign in'}
-            </button>
+            {error && (
+              <div className="tech-border bg-neutral-100 p-3">
+                <div className="flex items-start gap-2">
+                  <div className="w-1 h-1 bg-neutral-900 mt-1.5"></div>
+                  <p className="text-xs text-neutral-900 font-mono uppercase tracking-wide">{error}</p>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="tech-button w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-neutral-900 animate-pulse-subtle"></span>
+                    Processing...
+                  </span>
+                ) : (
+                  'Authenticate'
+                )}
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-6 pt-4 border-t border-neutral-300">
+            <p className="text-[10px] text-neutral-400 uppercase tracking-wider text-center">
+              Secure Access · Authorized Personnel Only
+            </p>
           </div>
-        </form>
+        </div>
 
-        <div className="mt-4 text-center text-xs text-gray-500">
-          <p>Secure access for authorized personnel only</p>
+        {/* Footer */}
+        <div className="text-center text-[10px] text-neutral-400 uppercase tracking-wider">
+          <p>Raisedash KPI Dashboard v1.0</p>
         </div>
       </div>
     </div>

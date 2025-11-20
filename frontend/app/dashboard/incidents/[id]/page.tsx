@@ -40,13 +40,20 @@ export default function IncidentDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+          <span className="text-xs uppercase tracking-wider text-neutral-500">Loading Incident...</span>
+        </div>
       </div>
     );
   }
 
   if (!data) {
-    return <div>Incident not found</div>;
+    return (
+      <div className="tech-border bg-white p-6">
+        <span className="text-xs uppercase tracking-wider text-neutral-500">Incident not found</span>
+      </div>
+    );
   }
 
   const { incident, events, participants, claims } = data;
@@ -57,22 +64,35 @@ export default function IncidentDetailPage() {
       <div>
         <Link
           href="/dashboard/incidents"
-          className="inline-flex items-center text-sm text-indigo-600 hover:text-indigo-900 mb-4"
+          className="inline-flex items-center text-xs uppercase tracking-wider text-neutral-600 hover:text-neutral-900 mb-4 transition-colors"
         >
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to Incidents
+          <ArrowLeft className="h-3 w-3 mr-1" strokeWidth={1} />
+          Back to Registry
         </Link>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Incident #{incident.incident_id}</h1>
-            <p className="mt-2 text-sm text-gray-600">
-              Created {formatDate(incident.t_created)} by{' '}
-              {incident.created_by_first_name || incident.created_by_username || `User ${incident.created_by_id}`}
-            </p>
+        <div className="border-b-2 border-neutral-800 pb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-2 h-2 bg-neutral-900"></div>
+                <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+                  Incident <span className="font-light text-neutral-500">#{incident.incident_id}</span>
+                </h1>
+              </div>
+              <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
+                Created {formatDate(incident.t_created)} by{' '}
+                {incident.created_by_first_name || incident.created_by_username || `User ${incident.created_by_id}`}
+              </p>
+            </div>
+            <span className={`badge ${
+              incident.status === 'Resolved' || incident.status === 'Closed'
+                ? 'badge-resolved'
+                : incident.status === 'In_Progress'
+                  ? 'badge-open'
+                  : 'badge-closed'
+            }`}>
+              {formatIncidentStatus(incident.status)}
+            </span>
           </div>
-          <span className={`px-4 py-2 inline-flex text-sm leading-5 font-semibold rounded-full ${getStatusColor(incident.status)}`}>
-            {formatIncidentStatus(incident.status)}
-          </span>
         </div>
       </div>
 
@@ -81,50 +101,55 @@ export default function IncidentDetailPage() {
         {/* Left column - Details */}
         <div className="lg:col-span-2 space-y-6">
           {/* Description */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Description</h3>
-            <p className="text-gray-700 whitespace-pre-wrap">{incident.description}</p>
+          <div className="tech-border bg-white p-4">
+            <div className="section-header mb-4">
+              <div className="section-tag">Description</div>
+            </div>
+            <p className="text-xs text-neutral-700 whitespace-pre-wrap leading-relaxed">{incident.description}</p>
           </div>
 
           {/* Resolution Summary */}
           {incident.resolution_summary && (
-            <div className="bg-green-50 rounded-lg border border-green-200 p-6">
-              <h3 className="text-lg font-semibold text-green-900 mb-4 flex items-center">
-                <CheckCircle className="h-5 w-5 mr-2" />
-                Resolution Summary
-              </h3>
-              <p className="text-green-800 whitespace-pre-wrap">{incident.resolution_summary}</p>
+            <div className="tech-border bg-neutral-50 p-4">
+              <div className="section-header mb-4">
+                <div className="section-tag">Resolution Summary</div>
+                <CheckCircle className="h-4 w-4 text-neutral-500" strokeWidth={1} />
+              </div>
+              <p className="text-xs text-neutral-700 whitespace-pre-wrap leading-relaxed">{incident.resolution_summary}</p>
             </div>
           )}
 
           {/* Timeline */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Timeline</h3>
+          <div className="tech-border bg-white p-4">
+            <div className="section-header mb-4">
+              <div className="section-tag">Event Timeline</div>
+            </div>
             <div className="flow-root">
-              <ul className="-mb-8">
+              <ul className="-mb-6">
                 {events.map((event, idx) => (
                   <li key={event.event_id}>
-                    <div className="relative pb-8">
+                    <div className="relative pb-6">
                       {idx !== events.length - 1 && (
                         <span
-                          className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200"
+                          className="absolute top-3 left-1 -ml-px h-full w-px bg-neutral-300"
                           aria-hidden="true"
                         />
                       )}
                       <div className="relative flex space-x-3">
                         <div>
-                          <span className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center ring-8 ring-white">
-                            <Clock className="h-4 w-4 text-indigo-600" />
+                          <span className="h-2 w-2 bg-neutral-900 flex items-center justify-center">
                           </span>
                         </div>
-                        <div className="flex min-w-0 flex-1 justify-between space-x-4 pt-1.5">
+                        <div className="flex min-w-0 flex-1 justify-between space-x-4">
                           <div>
-                            <p className="text-sm text-gray-900">
+                            <p className="text-xs uppercase tracking-wider text-neutral-900">
                               {event.event_type.replace('_', ' ')}
-                              {event.first_name && ` by ${event.first_name}`}
+                              {event.first_name && (
+                                <span className="text-neutral-500 ml-1">by {event.first_name}</span>
+                              )}
                             </p>
                           </div>
-                          <div className="whitespace-nowrap text-right text-sm text-gray-500">
+                          <div className="whitespace-nowrap text-right text-[10px] text-neutral-500 font-mono">
                             {formatDate(event.at)}
                           </div>
                         </div>
@@ -140,37 +165,39 @@ export default function IncidentDetailPage() {
         {/* Right column - Metadata */}
         <div className="space-y-6">
           {/* Key info */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Details</h3>
+          <div className="tech-border bg-white p-4">
+            <div className="section-header mb-4">
+              <div className="section-tag">Metadata</div>
+            </div>
             <dl className="space-y-3">
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Department</dt>
-                <dd className="mt-1 text-sm text-gray-900">{incident.department_name || 'Unassigned'}</dd>
+              <div className="py-2 tech-border-b">
+                <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Department</dt>
+                <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.department_name || 'Unassigned'}</dd>
               </div>
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Group</dt>
-                <dd className="mt-1 text-sm text-gray-900">{incident.group_name}</dd>
+              <div className="py-2 tech-border-b">
+                <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Group</dt>
+                <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.group_name}</dd>
               </div>
               {incident.t_first_claimed && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Time to Claim</dt>
-                  <dd className="mt-1 text-sm text-gray-900">
+                <div className="py-2 tech-border-b">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Time to Claim</dt>
+                  <dd className="text-xs text-neutral-900 font-mono">
                     {calculateDuration(incident.t_created, incident.t_first_claimed)}
                   </dd>
                 </div>
               )}
               {incident.t_resolved && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Time to Resolve</dt>
-                  <dd className="mt-1 text-sm text-gray-900">
+                <div className="py-2 tech-border-b">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Time to Resolve</dt>
+                  <dd className="text-xs text-neutral-900 font-mono">
                     {calculateDuration(incident.t_created, incident.t_resolved)}
                   </dd>
                 </div>
               )}
               {incident.resolved_by_first_name && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Resolved By</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{incident.resolved_by_first_name}</dd>
+                <div className="py-2">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Resolved By</dt>
+                  <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.resolved_by_first_name}</dd>
                 </div>
               )}
             </dl>
@@ -178,18 +205,20 @@ export default function IncidentDetailPage() {
 
           {/* Participants */}
           {participants.length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Participants</h3>
-              <ul className="space-y-3">
+            <div className="tech-border bg-white p-4">
+              <div className="section-header mb-4">
+                <div className="section-tag">Participants</div>
+              </div>
+              <ul className="space-y-2">
                 {participants.map((participant) => (
-                  <li key={participant.participant_id} className="flex items-center justify-between">
+                  <li key={participant.participant_id} className="flex items-center justify-between py-2 tech-border-b last:border-0">
                     <div className="flex items-center">
-                      <User className="h-4 w-4 text-gray-400 mr-2" />
-                      <span className="text-sm text-gray-900">
+                      <User className="h-3 w-3 text-neutral-400 mr-2" strokeWidth={1} />
+                      <span className="text-xs text-neutral-900 uppercase tracking-wide">
                         {participant.first_name || participant.username || `User ${participant.user_id}`}
                       </span>
                     </div>
-                    <span className="text-xs text-gray-500">{participant.status}</span>
+                    <span className="text-[10px] text-neutral-500 uppercase tracking-wider">{participant.status}</span>
                   </li>
                 ))}
               </ul>
@@ -198,16 +227,20 @@ export default function IncidentDetailPage() {
 
           {/* Active Claims */}
           {claims.filter(c => c.is_active).length > 0 && (
-            <div className="bg-blue-50 rounded-lg border border-blue-200 p-6">
-              <h3 className="text-lg font-semibold text-blue-900 mb-4 flex items-center">
-                <AlertCircle className="h-5 w-5 mr-2" />
-                Active Claims
-              </h3>
+            <div className="tech-border bg-neutral-50 p-4">
+              <div className="section-header mb-4">
+                <div className="section-tag">Active Claims</div>
+                <AlertCircle className="h-4 w-4 text-neutral-500" strokeWidth={1} />
+              </div>
               <ul className="space-y-2">
                 {claims.filter(c => c.is_active).map((claim) => (
-                  <li key={claim.claim_id} className="text-sm text-blue-800">
-                    {claim.first_name || claim.username || `User ${claim.user_id}`}
-                    {claim.department_name && ` (${claim.department_name})`}
+                  <li key={claim.claim_id} className="text-xs text-neutral-900 py-1">
+                    <span className="uppercase tracking-wide">
+                      {claim.first_name || claim.username || `User ${claim.user_id}`}
+                    </span>
+                    {claim.department_name && (
+                      <span className="text-[10px] text-neutral-500 ml-2 uppercase">({claim.department_name})</span>
+                    )}
                   </li>
                 ))}
               </ul>

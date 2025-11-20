@@ -59,111 +59,140 @@ export default function IncidentsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Incidents</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Track and manage all incidents across your organization
-          </p>
+      {/* Header */}
+      <div className="border-b-2 border-neutral-800 pb-4">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-2 h-2 bg-neutral-900"></div>
+          <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+            Incident <span className="font-light text-neutral-500">Registry</span>
+          </h1>
         </div>
+        <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
+          Comprehensive incident tracking and management system
+        </p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow p-4">
+      <div className="tech-border bg-white p-4">
+        <div className="section-header mb-4">
+          <div className="section-tag">Filter Controls</div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search incidents..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+              Search Query
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
+              <input
+                type="text"
+                placeholder="SEARCH INCIDENTS..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="tech-input w-full pl-10"
+              />
+            </div>
           </div>
 
           {/* Status filter */}
-          <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none"
-            >
-              <option value="">All Statuses</option>
-              <option value="Awaiting_Department">Awaiting Department</option>
-              <option value="Awaiting_Claim">Awaiting Claim</option>
-              <option value="In_Progress">In Progress</option>
-              <option value="Awaiting_Summary">Awaiting Summary</option>
-              <option value="Resolved">Resolved</option>
-              <option value="Closed">Closed</option>
-            </select>
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+              Status Filter
+            </label>
+            <div className="relative">
+              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="tech-input w-full pl-10 appearance-none uppercase text-xs"
+              >
+                <option value="">All Statuses</option>
+                <option value="Awaiting_Department">Awaiting Department</option>
+                <option value="Awaiting_Claim">Awaiting Claim</option>
+                <option value="In_Progress">In Progress</option>
+                <option value="Awaiting_Summary">Awaiting Summary</option>
+                <option value="Resolved">Resolved</option>
+                <option value="Closed">Closed</option>
+              </select>
+            </div>
           </div>
+        </div>
+        <div className="mt-3 text-[10px] text-neutral-400 uppercase tracking-wide">
+          Showing {filteredIncidents.length} of {incidents.length} incidents
         </div>
       </div>
 
       {/* Incidents table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="tech-border bg-white overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+              <span className="text-xs uppercase tracking-wider text-neutral-500">Loading Incidents...</span>
+            </div>
           </div>
         ) : filteredIncidents.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-gray-500">No incidents found</p>
+            <p className="text-xs uppercase tracking-wider text-neutral-500">No incidents found</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full">
+              <thead className="bg-neutral-100 tech-border-b">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Description
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Department
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Created
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-neutral-200">
                 {filteredIncidents.map((incident) => (
-                  <tr key={incident.incident_id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr key={incident.incident_id} className="hover:bg-neutral-50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-neutral-900">
                       #{incident.incident_id}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(incident.status)}`}>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`badge ${
+                        incident.status === 'Resolved' || incident.status === 'Closed'
+                          ? 'badge-resolved'
+                          : incident.status === 'In_Progress'
+                            ? 'badge-open'
+                            : 'badge-closed'
+                      }`}>
                         {formatIncidentStatus(incident.status)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-xs text-neutral-700 max-w-md">
                       {truncate(incident.description, 60)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-600 uppercase">
                       {incident.department_name || 'Unassigned'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-500 font-mono">
                       {formatDate(incident.t_created)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-4 py-3 whitespace-nowrap text-xs">
                       <Link
                         href={`/dashboard/incidents/${incident.incident_id}`}
-                        className="text-indigo-600 hover:text-indigo-900 font-medium"
+                        className="tech-button px-2 py-1 inline-block text-[10px]"
                       >
-                        View Details
+                        View
                       </Link>
                     </td>
                   </tr>
