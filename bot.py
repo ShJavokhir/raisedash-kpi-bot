@@ -64,6 +64,7 @@ class IncidentBot:
         # Command handlers
         app.add_handler(CommandHandler("start", self.bot_handlers.start_command))
         app.add_handler(CommandHandler("help", self.bot_handlers.start_command))  # Alias for /start
+        app.add_handler(CommandHandler("report", self.bot_handlers.report_command))
         app.add_handler(CommandHandler("configure_managers", self.bot_handlers.configure_managers_command))
         app.add_handler(CommandHandler("add_dispatcher", self.bot_handlers.add_dispatcher_command))
         app.add_handler(CommandHandler("add_manager", self.bot_handlers.add_manager_command))

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Raisedash KPI Report</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { mono: ['"JetBrains Mono"', 'monospace'] },
+          colors: {
+            paper: '#f4f4f4',
+            ink: '#1a1a1a',
+            subtle: '#e5e5e5',
+            alert: '#525252'
+          },
+          fontSize: { 'xxs': '0.65rem' }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #f4f4f4; }
+    .bg-noise {
+      background-color: #f4f4f4;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+    }
+    .tech-border { border: 1px solid #a3a3a3; }
+    .section-tag {
+      background-color: #1a1a1a;
+      color: #f5f5f5;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      display: inline-block;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #a3a3a3;
+      padding-bottom: 0.25rem;
+      margin-bottom: 1rem;
+    }
+    th { font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; color: #525252; }
+    @media print {
+      @page { size: landscape; margin: 0.5cm; }
+      body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background-color: #fff; }
+      .no-print { display: none !important; }
+      .break-inside-avoid { page-break-inside: avoid; break-inside: avoid; }
+      .overflow-y-auto, .overflow-x-auto { overflow: visible !important; height: auto !important; max-height: none !important; }
+      .tech-border { border: 1px solid #000; }
+      canvas { max-width: 100% !important; }
+    }
+  </style>
+  <script>
+    // Placeholder replaced in Python with real data
+    window.REPORT_DATA = __REPORT_DATA__;
+  </script>
+</head>
+<body class="bg-noise text-ink font-mono antialiased min-h-screen selection:bg-neutral-300 flex flex-col">
+  <div class="max-w-[1600px] w-full mx-auto p-4 md:p-8 flex-grow">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-end justify-between mb-8 border-b-2 border-neutral-800 pb-4 gap-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <div class="w-3 h-3 bg-neutral-900"></div>
+          <h1 class="text-xl font-bold tracking-widest uppercase">
+            Raisedash <span class="font-light text-neutral-500">KPI</span> Report
+          </h1>
+        </div>
+        <p class="text-xs text-neutral-500 pl-5 uppercase tracking-wider">
+          <span id="companyName">Company</span> · <span id="periodLabel">Period</span> · <span id="timezoneLabel">TZ</span>
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3 no-print">
+        <button class="flex items-center gap-2 tech-border bg-white/50 px-3 py-1.5 text-xs font-bold uppercase hover:bg-white transition-colors" onclick="window.print()">
+          <span>Print / PDF</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- KPI Cards -->
+    <div class="mb-8 break-inside-avoid">
+      <div class="section-header !mb-4">
+        <div class="section-tag">Global Metrics</div>
+        <div class="h-[1px] bg-neutral-300 flex-grow ml-4"></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-container">
+        <div class="tech-border bg-white/50 p-3 flex flex-col h-full min-h-[100px]">
+          <span class="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold mb-2 block">Loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+      <div class="break-inside-avoid">
+        <div class="section-header">
+          <div class="section-tag">Throughput Velocity</div>
+          <span class="text-[10px] text-neutral-400 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Data Window
+          </span>
+        </div>
+        <div class="h-[360px] w-full tech-border bg-white p-4 relative">
+          <canvas id="trendsChart"></canvas>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-6 break-inside-avoid">
+        <div class="flex-1">
+          <div class="section-header">
+            <div class="section-tag">Escalation Analysis</div>
+          </div>
+          <div class="h-[200px] tech-border bg-white p-2 relative">
+            <canvas id="escalationChart"></canvas>
+          </div>
+        </div>
+
+        <div class="flex-1">
+          <div class="section-header">
+            <div class="section-tag">Highlights</div>
+          </div>
+          <div class="tech-border bg-white p-4 text-xs space-y-3 flex flex-col h-[200px] overflow-hidden">
+            <div class="overflow-y-auto pr-2 space-y-3 custom-scrollbar flex-grow" id="logContainer"></div>
+            <div class="mt-auto pt-2 p-2 bg-neutral-100 border border-neutral-200 text-[10px]" id="footnote"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Table -->
+    <div class="mb-8 break-inside-avoid">
+      <div class="section-header">
+        <div class="section-tag">Personnel Performance Ledger</div>
+      </div>
+      <div class="w-full overflow-x-auto tech-border bg-white">
+        <table class="w-full text-left text-xs" id="dispatcherTable">
+          <thead class="bg-neutral-100 border-b border-neutral-400 text-neutral-500">
+            <tr>
+              <th class="px-4 py-3 w-20 font-normal">ID</th>
+              <th class="px-4 py-3 font-normal">Personnel</th>
+              <th class="px-4 py-3 font-normal">Tier</th>
+              <th class="px-4 py-3 font-normal text-right">Incidents</th>
+              <th class="px-4 py-3 font-normal text-right">Resolved</th>
+              <th class="px-4 py-3 font-normal text-right">Active Time</th>
+              <th class="px-4 py-3 font-normal text-right">Escalated</th>
+              <th class="px-4 py-3 font-normal text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-200" id="tableBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Backlog -->
+    <div class="mb-8 break-inside-avoid">
+      <div class="section-header">
+        <div class="section-tag">Open Backlog</div>
+      </div>
+      <div class="w-full overflow-x-auto tech-border bg-white">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-neutral-100 border-b border-neutral-400 text-neutral-500">
+            <tr>
+              <th class="px-4 py-3 font-normal">Incident</th>
+              <th class="px-4 py-3 font-normal">Status</th>
+              <th class="px-4 py-3 font-normal text-right">Age (hrs)</th>
+              <th class="px-4 py-3 font-normal">Created</th>
+              <th class="px-4 py-3 font-normal">Summary</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-200" id="backlogBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-neutral-300 pt-4 flex justify-between text-[10px] text-neutral-500 uppercase tracking-wider break-inside-avoid">
+      <div id="timestamp">Generated: --</div>
+      <div id="windowRange">Window: --</div>
+    </footer>
+  </div>
+
+  <script>
+    const DATA = window.REPORT_DATA || {};
+
+    const fmtNumber = (value) => {
+      if (value === null || value === undefined) return '—';
+      return new Intl.NumberFormat('en-US').format(value);
+    };
+
+    const fmtDuration = (seconds) => {
+      if (seconds === null || seconds === undefined || isNaN(seconds)) return '—';
+      const s = Number(seconds);
+      if (s < 60) return `${Math.round(s)}s`;
+      const m = s / 60;
+      if (m < 90) return `${m.toFixed(1)}m`;
+      return `${(m / 60).toFixed(1)}h`;
+    };
+
+    function renderHeader() {
+      document.getElementById('companyName').innerText = DATA.meta?.company_name || 'Company';
+      document.getElementById('periodLabel').innerText = DATA.meta?.period_label || 'Period';
+      document.getElementById('timezoneLabel').innerText = DATA.meta?.timezone || 'UTC';
+      document.getElementById('windowRange').innerText =
+        `Window: ${DATA.meta?.window_start || ''} → ${DATA.meta?.window_end || ''}`;
+    }
+
+    function renderCards() {
+      const cards = DATA.cards || [];
+      const kpiContainer = document.getElementById('kpi-container');
+      kpiContainer.innerHTML = '';
+      cards.forEach(card => {
+        const div = document.createElement('div');
+        div.className = "tech-border bg-white/50 p-3 flex flex-col h-full min-h-[100px] hover:bg-white transition-colors duration-200 break-inside-avoid";
+        div.innerHTML = `
+          <span class="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold mb-2 block">${card.label}</span>
+          <div class="mt-auto">
+            <div class="flex items-baseline justify-between">
+              <span class="text-3xl font-light tracking-tighter text-neutral-900">${card.value}</span>
+            </div>
+            <p class="text-[10px] text-neutral-400 mt-1">${card.subtext || ''}</p>
+          </div>
+        `;
+        kpiContainer.appendChild(div);
+      });
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+      const rows = DATA.leaderboard || [];
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-neutral-50 transition-colors';
+        const statusIcon = `<div class="w-full bg-neutral-200 h-1.5 mt-1 relative">
+              <div class="h-full ${row.resolved_self > 0 ? 'bg-neutral-800' : 'bg-neutral-400'} absolute top-0 left-0" style="width: ${Math.min(100, (row.resolved_self || 0) * 20)}%"></div>
+            </div>`;
+        tr.innerHTML = `
+          <td class="px-4 py-3 font-mono text-neutral-400">${row.user_id}</td>
+          <td class="px-4 py-3">
+            <div class="font-bold text-neutral-800">${row.handle}</div>
+            <div class="text-[10px] text-neutral-500 uppercase">Incidents: ${row.incidents_touched || 0}</div>
+          </td>
+          <td class="px-4 py-3 text-right font-mono">${row.tier}</td>
+          <td class="px-4 py-3 text-right font-mono">${row.incidents_touched || 0}</td>
+          <td class="px-4 py-3 text-right font-mono">${row.resolved_self || 0}</td>
+          <td class="px-4 py-3 text-right font-mono">${fmtDuration(row.total_active_seconds)}</td>
+          <td class="px-4 py-3 text-right font-mono">${row.escalated_out || 0}</td>
+          <td class="px-4 py-3 text-center">${statusIcon}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderBacklog() {
+      const tbody = document.getElementById('backlogBody');
+      tbody.innerHTML = '';
+      const rows = DATA.backlog || [];
+      if (!rows.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="px-4 py-3 text-neutral-500" colspan="5">No open incidents.</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="px-4 py-3 font-mono">${row.incident_id}</td>
+          <td class="px-4 py-3 uppercase text-[11px]">${row.status}</td>
+          <td class="px-4 py-3 text-right font-mono">${fmtNumber(row.age_hours)}</td>
+          <td class="px-4 py-3 text-neutral-500">${row.t_created || ''}</td>
+          <td class="px-4 py-3 text-neutral-700">${(row.description || '').slice(0, 120)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderHighlights() {
+      const container = document.getElementById('logContainer');
+      container.innerHTML = '';
+      const highlights = DATA.highlights || [];
+      highlights.forEach((h, idx) => {
+        const p = document.createElement('p');
+        p.className = 'text-neutral-600 font-mono leading-relaxed';
+        p.innerHTML = `> <span class="font-bold text-neutral-900">#${idx + 1}</span> ${h}`;
+        container.appendChild(p);
+      });
+      const foot = document.getElementById('footnote');
+      foot.innerText = `Generated ${DATA.meta?.generated_at || ''} UTC`;
+    }
+
+    function renderTrendsChart() {
+      const ctx = document.getElementById('trendsChart').getContext('2d');
+      const trends = DATA.trends || [];
+      const labels = trends.map(t => t.bucket);
+      const created = trends.map(t => t.created || 0);
+      const closed = trends.map(t => t.closed || 0);
+      const escalated = trends.map(t => t.escalated || 0);
+
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Created', data: created, borderColor: '#1a1a1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
+            { label: 'Closed', data: closed, borderColor: '#737373', borderWidth: 1.5, pointRadius: 0, borderDash: [4,4], tension: 0.3 },
+            { label: 'Escalated', data: escalated, borderColor: '#d97706', borderWidth: 1.5, pointRadius: 0, tension: 0.3 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { usePointStyle: true, boxWidth: 8, boxHeight: 8 } } },
+          scales: { y: { beginAtZero: true, grid: { drawBorder: false } }, x: { grid: { display: false } } }
+        }
+      });
+    }
+
+    function renderEscalationChart() {
+      const ctx = document.getElementById('escalationChart').getContext('2d');
+      const esc = DATA.escalations || {};
+      const labels = ['Escalations', 'Claimed T2', 'Escalation→Resolve'];
+      const data = [
+        esc.escalations || 0,
+        esc.claimed_t2 || 0,
+        esc.resolved_after_escalation || 0
+      ];
+
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Count',
+            data,
+            backgroundColor: '#525252',
+            borderRadius: 2,
+            barThickness: 18
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { x: { grid: { display: false } }, y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    function init() {
+      renderHeader();
+      renderCards();
+      renderTable();
+      renderBacklog();
+      renderHighlights();
+      renderTrendsChart();
+      renderEscalationChart();
+      document.getElementById('timestamp').innerText =
+        `Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
