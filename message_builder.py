@@ -25,8 +25,8 @@ class MessageBuilder:
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Dispatchers: Use the buttons below to claim or escalate this incident. "
-            "Multiple responders can swarm the same issue."
+            "Tier 1 dispatchers: Claim this incident if you are taking ownership. "
+            "More than one responder can work on the same issue."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -45,14 +45,14 @@ class MessageBuilder:
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Status: 🛠️ IN PROGRESS\n"
-            f"Responders: {responders}\n"
+            f"Tier 1 dispatchers: {responders}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Multiple dispatchers can join or leave as needed. "
-            "Escalate to a manager only when the team needs support."
+            "Other Tier 1 dispatchers can join or leave as needed. "
+            "Escalate to a manager only if Tier 1 needs support."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -78,12 +78,12 @@ class MessageBuilder:
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             f"Escalated by: {escalated_by_handle}\n"
-            f"Dispatchers on it: {responders}\n"
+            f"Tier 1 dispatchers on it: {responders}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             "Managers: Claim this escalation if you are taking ownership. "
-            "More than one manager can join."
+            "Other managers may also join to assist."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -106,11 +106,11 @@ class MessageBuilder:
             f"Managers: {managers}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            f"Dispatchers: {dispatchers}\n"
+            f"Tier 1 dispatchers: {dispatchers}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Managers: Resolve when the issue is fully addressed. Others may join to assist."
+            "Managers: Resolve when the issue is fully addressed. Other managers may join to assist."
         )
 
         keyboard = InlineKeyboardMarkup([
@@ -162,6 +162,36 @@ class MessageBuilder:
         return text, None
 
     @staticmethod
+    def build_closed_message(incident: Dict[str, Any], closed_by: Optional[str], reason: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+        """Build message for auto-closed incident (no summary provided)."""
+        closed_by_text = closed_by or "System"
+        text = (
+            "❌ INCIDENT CLOSED\n"
+            "------------------------------\n"
+            f"ID: {incident['incident_id']}\n"
+            "Status: ❌ CLOSED\n"
+            f"Closed by: {closed_by_text}\n"
+            f"Reason: {reason}\n"
+            "------------------------------\n"
+            f"Reported by: {incident['created_by_handle']}\n"
+            "Issue:\n"
+            f"{incident['description']}\n"
+            "------------------------------\n"
+            "Resolution summary:\n"
+            f"{incident.get('resolution_summary', 'No summary provided.')}"
+        )
+
+        return text, None
+
+    @staticmethod
+    def build_auto_close_notice(incident_id: str, user_handle: str, minutes: int) -> str:
+        """Build concise notice when summary timeout closes an incident."""
+        return (
+            f"Auto-closed {incident_id} after waiting {minutes} minutes for {user_handle}'s summary. "
+            "Reopen manually if more details are needed."
+        )
+
+    @staticmethod
     def build_escalation_notification(incident_id: str, manager_handles: list[str]) -> str:
         """Build notification message for managers when incident is escalated."""
         managers_text = ", ".join(manager_handles)
@@ -191,7 +221,7 @@ class MessageBuilder:
             f"Incident: {incident_id}\n"
             f"Unclaimed for: {minutes} minutes\n"
             "------------------------------\n"
-            "Dispatchers: Please review the pinned incident message and claim it if you are taking ownership."
+            "Tier 1 dispatchers: Please review the pinned incident message and claim it if you are taking ownership."
         )
 
     @staticmethod

@@ -103,11 +103,11 @@ cursor.execute("PRAGMA journal_mode=WAL")
 
 #### 7. **Timezone Handling**
 
-**Issue**: All timestamps use `datetime.now()` which is local time. Could cause issues in multi-timezone deployments.
+**Issue**: All timestamps use `datetime.now()` which is local time. Could cause issues in multi-timezone deployments. _(Addressed: now using UTC-aware helpers and ISO 8601 with offsets.)_
 
 **Current Mitigation**:
-- ISO 8601 format used for storage
-- Comparisons are relative (time deltas)
+- ISO 8601 format used for storage with explicit UTC offset
+- Comparisons are relative (time deltas) and parse legacy naive values as UTC
 
 **Production Recommendation**:
 - Use `datetime.now(timezone.utc)` for all timestamps

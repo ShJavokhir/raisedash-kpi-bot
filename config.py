@@ -28,6 +28,7 @@ class Config:
     # SLA Timers (in minutes)
     SLA_UNCLAIMED_NUDGE_MINUTES = int(os.getenv('SLA_UNCLAIMED_NUDGE_MINUTES', '10'))
     SLA_ESCALATION_NUDGE_MINUTES = int(os.getenv('SLA_ESCALATION_NUDGE_MINUTES', '15'))
+    SLA_SUMMARY_TIMEOUT_MINUTES = int(os.getenv('SLA_SUMMARY_TIMEOUT_MINUTES', '10'))
 
     # Background task interval
     REMINDER_CHECK_INTERVAL_MINUTES = int(os.getenv('REMINDER_CHECK_INTERVAL_MINUTES', '5'))
@@ -63,3 +64,8 @@ class Config:
     def get_reminder_interval_seconds(cls) -> int:
         """Get reminder check interval in seconds."""
         return cls.REMINDER_CHECK_INTERVAL_MINUTES * 60
+
+    @classmethod
+    def get_summary_timeout_seconds(cls) -> int:
+        """Get resolution summary timeout window in seconds."""
+        return cls.SLA_SUMMARY_TIMEOUT_MINUTES * 60

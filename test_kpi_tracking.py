@@ -7,9 +7,10 @@ Validates multi-dispatcher claims, durations, and event logging.
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from database import Database
+from time_utils import isoformat_utc, utc_now
 
 
 DB_PATH = os.path.join(tempfile.gettempdir(), "kpi_metrics_test.db")
@@ -45,8 +46,8 @@ def run_kpi_tracking_test() -> bool:
     print("   ✓ Claims recorded")
 
     # Push active_since backward to get meaningful durations
-    ten_minutes_ago = (datetime.now() - timedelta(minutes=10)).isoformat()
-    five_minutes_ago = (datetime.now() - timedelta(minutes=5)).isoformat()
+    ten_minutes_ago = isoformat_utc(utc_now() - timedelta(minutes=10))
+    five_minutes_ago = isoformat_utc(utc_now() - timedelta(minutes=5))
     with db.get_connection() as conn:
         conn.execute("""
             UPDATE incident_participants

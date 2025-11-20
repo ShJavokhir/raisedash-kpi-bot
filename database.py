@@ -7,10 +7,12 @@ import sqlite3
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
 from threading import Lock
+
+from time_utils import parse_timestamp, utc_iso_now, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +309,7 @@ class Database:
             SET created_at = ?,
                 updated_at = ?
             WHERE created_at IS NULL OR updated_at IS NULL
-        """, (datetime.now().isoformat(), datetime.now().isoformat()))
+        """, (utc_iso_now(), utc_iso_now()))
 
         # Ensure incident_claims table and indexes exist (multi-claim support)
         cursor.execute("""
@@ -408,7 +410,7 @@ class Database:
                        dispatcher_user_ids: Optional[List[int]] = None,
                        metadata: Optional[Dict[str, Any]] = None) -> int:
         """Create a new company record."""
-        timestamp = datetime.now().isoformat()
+        timestamp = utc_iso_now()
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -488,7 +490,7 @@ class Database:
             return
 
         updates.append("updated_at = ?")
-        params.append(datetime.now().isoformat())
+        params.append(utc_iso_now())
         params.append(company_id)
 
         with self._lock:
@@ -816,7 +818,7 @@ class Database:
             Dict containing the user's complete information after upsert
         """
         with self._lock:
-            timestamp = datetime.now().isoformat()
+            timestamp = utc_iso_now()
 
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -893,7 +895,7 @@ class Database:
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                timestamp = datetime.now().isoformat()
+                timestamp = utc_iso_now()
 
                 # Get existing data to preserve
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -944,6 +946,17 @@ class Database:
                 }
             return None
 
+    def get_user_handle_or_fallback(self, user_id: Optional[int]) -> str:
+        """Return a readable handle for a user or a defensive fallback."""
+        if not user_id:
+            return "the assigned responder"
+
+        user = self.get_user(user_id)
+        handle = (user.get('telegram_handle') if user else None) or (user.get('username') if user else None)
+        if handle:
+            return handle
+        return f"User_{user_id}"
+
     def add_group_connection_to_user(self, user_id: int, group_id: int):
         """
         Add a group connection to an existing user.
@@ -967,11 +980,11 @@ class Database:
                             SET group_connections = ?,
                                 updated_at = ?
                             WHERE user_id = ?
-                        """, (json.dumps(connections), datetime.now().isoformat(), user_id))
+                        """, (json.dumps(connections), utc_iso_now(), user_id))
                         logger.info(f"Added group {group_id} to user {user_id}'s connections")
                 else:
                     # User doesn't exist, create minimal record with group connection
-                    timestamp = datetime.now().isoformat()
+                    timestamp = utc_iso_now()
                     cursor.execute("""
                         INSERT INTO users (
                             user_id, telegram_handle, group_connections,
@@ -1008,7 +1021,7 @@ class Database:
         """Create a new incident and return its ID."""
         with self._lock:
             incident_id = self.generate_incident_id()
-            t_created = datetime.now().isoformat()
+            t_created = utc_iso_now()
             company_id_to_use = company_id
 
             if company_id_to_use is None:
@@ -1122,7 +1135,7 @@ class Database:
             event_type,
             user_id,
             tier,
-            datetime.now().isoformat(),
+            utc_iso_now(),
             json.dumps(metadata or {})
         ))
 
@@ -1165,8 +1178,8 @@ class Database:
 
         if row['is_active'] and active_since:
             try:
-                started = datetime.fromisoformat(active_since)
-                ended = datetime.fromisoformat(stop_time)
+                started = parse_timestamp(active_since)
+                ended = parse_timestamp(stop_time)
                 delta = int(max(0, (ended - started).total_seconds()))
                 total_seconds += delta
             except Exception as exc:
@@ -1211,6 +1224,24 @@ class Database:
                 row['tier'],
                 resolved_at,
                 status,
+                mark_resolved=True
+            )
+
+    def _finalize_active_participants_closed(self, cursor, incident_id: str, closed_at: str):
+        """Close out active participants when an incident is auto-closed."""
+        cursor.execute("""
+            SELECT user_id, tier FROM incident_participants
+            WHERE incident_id = ? AND is_active = 1
+        """, (incident_id,))
+
+        for row in cursor.fetchall():
+            self._finalize_participation(
+                cursor,
+                incident_id,
+                row['user_id'],
+                row['tier'],
+                closed_at,
+                'closed',
                 mark_resolved=True
             )
 
@@ -1320,7 +1351,7 @@ class Database:
                 if self._has_active_claim(cursor, incident_id, user_id, tier=1):
                     return False, "You're already working on this incident."
 
-                t_claimed = datetime.now().isoformat()
+                t_claimed = utc_iso_now()
 
                 cursor.execute("""
                     INSERT INTO incident_claims (incident_id, user_id, tier, claimed_at, is_active)
@@ -1361,7 +1392,7 @@ class Database:
                 if not self._has_active_claim(cursor, incident_id, user_id, tier=1):
                     return False, "You are not part of this incident."
 
-                t_released = datetime.now().isoformat()
+                t_released = utc_iso_now()
                 cursor.execute("""
                     UPDATE incident_claims
                     SET is_active = 0,
@@ -1419,7 +1450,7 @@ class Database:
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                t_escalated = datetime.now().isoformat()
+                t_escalated = utc_iso_now()
 
                 # Ensure the incident is in the right state
                 cursor.execute("""
@@ -1475,7 +1506,7 @@ class Database:
                 if self._has_active_claim(cursor, incident_id, user_id, tier=2):
                     return False, "You're already on this escalation."
 
-                t_claimed = datetime.now().isoformat()
+                t_claimed = utc_iso_now()
                 cursor.execute("""
                     INSERT INTO incident_claims (incident_id, user_id, tier, claimed_at, is_active)
                     VALUES (?, ?, 2, ?, 1)
@@ -1513,7 +1544,7 @@ class Database:
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                t_resolution_requested = datetime.now().isoformat()
+                t_resolution_requested = utc_iso_now()
 
                 cursor.execute("""
                     SELECT status FROM incidents WHERE incident_id = ?
@@ -1566,7 +1597,7 @@ class Database:
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                t_resolved = datetime.now().isoformat()
+                t_resolved = utc_iso_now()
                 resolver_tier = self._get_user_tier_for_incident(cursor, incident_id, user_id)
 
                 cursor.execute("""
@@ -1591,18 +1622,71 @@ class Database:
                 else:
                     return False, "You cannot resolve this incident or it's not awaiting summary."
 
+    def auto_close_incident(self, incident_id: str, summary: str,
+                            reason: str = "Resolution summary timeout") -> Tuple[bool, str]:
+        """Auto-close an incident that is stuck awaiting a summary."""
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                t_closed = utc_iso_now()
+
+                cursor.execute("""
+                    SELECT status, pending_resolution_by_user_id
+                    FROM incidents
+                    WHERE incident_id = ?
+                """, (incident_id,))
+                row = cursor.fetchone()
+
+                if not row:
+                    return False, "Incident not found."
+
+                if row['status'] != 'Awaiting_Summary':
+                    return False, "Incident is not awaiting summary."
+
+                pending_user_id = row['pending_resolution_by_user_id']
+                resolver_tier = self._get_user_tier_for_incident(cursor, incident_id, pending_user_id) if pending_user_id else None
+
+                cursor.execute("""
+                    UPDATE incidents
+                    SET status = 'Closed',
+                        resolution_summary = ?,
+                        t_resolved = ?,
+                        pending_resolution_by_user_id = NULL,
+                        resolved_by_user_id = COALESCE(?, resolved_by_user_id),
+                        resolved_by_tier = COALESCE(?, resolved_by_tier)
+                    WHERE incident_id = ?
+                      AND status = 'Awaiting_Summary'
+                """, (summary, t_closed, pending_user_id, resolver_tier, incident_id))
+
+                if cursor.rowcount == 0:
+                    return False, "Incident status changed before auto-close."
+
+                self._close_active_claims(cursor, incident_id, t_closed)
+                self._finalize_active_participants_closed(cursor, incident_id, t_closed)
+                self._record_event(
+                    cursor,
+                    incident_id,
+                    'auto_closed',
+                    pending_user_id,
+                    tier=resolver_tier,
+                    metadata={"reason": reason}
+                )
+                logger.info(f"Incident {incident_id} auto-closed after summary timeout")
+                return True, "Incident auto-closed."
+
     # ==================== Query Functions for Reminders ====================
 
     def get_unclaimed_incidents(self, minutes_threshold: int) -> List[Dict[str, Any]]:
         """Get incidents that have been unclaimed for more than the threshold."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            threshold_time = datetime.now().timestamp() - (minutes_threshold * 60)
+            # Compare ISO timestamps directly to avoid UTC/local skew from unixepoch conversions
+            threshold_time = (utc_now() - timedelta(minutes=minutes_threshold)).isoformat()
 
             cursor.execute("""
                 SELECT * FROM incidents
                 WHERE status = 'Unclaimed'
-                  AND datetime(t_created) <= datetime(?, 'unixepoch')
+                  AND datetime(t_created) <= datetime(?)
             """, (threshold_time,))
 
             return [dict(row) for row in cursor.fetchall()]
@@ -1611,12 +1695,29 @@ class Database:
         """Get escalations that have been unclaimed for more than the threshold."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            threshold_time = datetime.now().timestamp() - (minutes_threshold * 60)
+            # Compare ISO timestamps directly to avoid UTC/local skew from unixepoch conversions
+            threshold_time = (utc_now() - timedelta(minutes=minutes_threshold)).isoformat()
 
             cursor.execute("""
                 SELECT * FROM incidents
                 WHERE status = 'Escalated_Unclaimed_T2'
-                  AND datetime(t_escalated) <= datetime(?, 'unixepoch')
+                  AND datetime(t_escalated) <= datetime(?)
+            """, (threshold_time,))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_awaiting_summary_incidents(self, minutes_threshold: int) -> List[Dict[str, Any]]:
+        """Get incidents that have been awaiting summary longer than the threshold."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Compare ISO timestamps directly to avoid UTC/local skew from unixepoch conversions
+            threshold_time = (utc_now() - timedelta(minutes=minutes_threshold)).isoformat()
+
+            cursor.execute("""
+                SELECT * FROM incidents
+                WHERE status = 'Awaiting_Summary'
+                  AND t_resolution_requested IS NOT NULL
+                  AND datetime(t_resolution_requested) <= datetime(?)
             """, (threshold_time,))
 
             return [dict(row) for row in cursor.fetchall()]

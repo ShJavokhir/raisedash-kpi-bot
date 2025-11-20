@@ -4,7 +4,6 @@ Main entry point for the Enterprise Incident Management Bot.
 
 import logging
 import asyncio
-from datetime import datetime
 
 from telegram.ext import (
     Application,
@@ -19,6 +18,7 @@ from config import Config
 from database import Database
 from handlers import BotHandlers
 from reminders import ReminderService
+from time_utils import utc_now
 
 # Configure logging
 logging.basicConfig(
@@ -103,7 +103,7 @@ class IncidentBot:
                 await self.reminder_service.check_and_send_reminders()
 
                 # Periodic cleanup
-                if datetime.now().minute == 0:  # Once per hour
+                if utc_now().minute == 0:  # Once per hour (UTC)
                     self.reminder_service.cleanup_old_reminders()
 
             except Exception as e:

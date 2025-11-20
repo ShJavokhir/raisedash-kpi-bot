@@ -3,14 +3,14 @@ Reminder module for automated SLA nudges and notifications.
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Set
+from typing import Set
 from telegram import Bot
 from telegram.error import TelegramError
 
 from database import Database
 from message_builder import MessageBuilder
 from config import Config
+from time_utils import minutes_since
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ class ReminderService:
         try:
             await self._check_unclaimed_reminders()
             await self._check_escalation_reminders()
+            await self._check_summary_timeouts()
         except Exception as e:
             logger.error(f"Error in reminder check: {e}", exc_info=True)
 
@@ -59,8 +60,7 @@ class ReminderService:
                     continue
 
                 # Calculate how long it's been unclaimed
-                t_created = datetime.fromisoformat(incident['t_created'])
-                minutes_unclaimed = int((datetime.now() - t_created).total_seconds() / 60)
+                minutes_unclaimed = minutes_since(incident['t_created'])
 
                 # Build and send reminder
                 reminder_text = self.message_builder.build_unclaimed_reminder(
@@ -123,8 +123,7 @@ class ReminderService:
                     continue
 
                 # Calculate how long it's been escalated
-                t_escalated = datetime.fromisoformat(incident['t_escalated'])
-                minutes_escalated = int((datetime.now() - t_escalated).total_seconds() / 60)
+                minutes_escalated = minutes_since(incident['t_escalated'])
 
                 # Build and send reminder
                 reminder_text = self.message_builder.build_escalation_reminder(
@@ -148,6 +147,98 @@ class ReminderService:
                 logger.error(f"Error sending escalation reminder for {incident_id}: {e}")
             except Exception as e:
                 logger.error(f"Unexpected error processing escalated incident {incident_id}: {e}")
+
+    async def _check_summary_timeouts(self):
+        """Auto-close incidents that have waited too long for a summary."""
+        awaiting_summaries = self.db.get_awaiting_summary_incidents(
+            Config.SLA_SUMMARY_TIMEOUT_MINUTES
+        )
+
+        for incident in awaiting_summaries:
+            incident_id = incident['incident_id']
+
+            try:
+                pending_handle = self.db.get_user_handle_or_fallback(
+                    incident.get('pending_resolution_by_user_id')
+                )
+
+                closing_summary = (
+                    f"Auto-closed after waiting {Config.SLA_SUMMARY_TIMEOUT_MINUTES} minutes "
+                    f"for a resolution summary from {pending_handle}. No response received."
+                )
+
+                success, msg = self.db.auto_close_incident(
+                    incident_id,
+                    closing_summary,
+                    reason="summary_timeout"
+                )
+
+                if not success:
+                    logger.warning(f"Skipping auto-close for {incident_id}: {msg}")
+                    continue
+
+                updated_incident = self.db.get_incident(incident_id)
+                if not updated_incident:
+                    logger.warning(f"Incident {incident_id} not found after auto-close")
+                    continue
+
+                closed_text, _ = self.message_builder.build_closed_message(
+                    updated_incident,
+                    pending_handle,
+                    "No resolution summary received"
+                )
+
+                pinned_message_id = incident.get('pinned_message_id')
+                if pinned_message_id:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=incident['group_id'],
+                            message_id=pinned_message_id,
+                            text=closed_text
+                        )
+                    except TelegramError as e:
+                        logger.error(f"Error updating pinned message for {incident_id}: {e}")
+
+                    try:
+                        await self.bot.unpin_chat_message(
+                            chat_id=incident['group_id'],
+                            message_id=pinned_message_id
+                        )
+                    except TelegramError as e:
+                        logger.warning(f"Could not unpin closed incident {incident_id}: {e}")
+                else:
+                    try:
+                        await self.bot.send_message(
+                            chat_id=incident['group_id'],
+                            text=closed_text
+                        )
+                    except TelegramError as e:
+                        logger.error(f"Error sending closed message for {incident_id}: {e}")
+
+                notice_text = self.message_builder.build_auto_close_notice(
+                    incident_id,
+                    pending_handle,
+                    Config.SLA_SUMMARY_TIMEOUT_MINUTES
+                )
+
+                send_kwargs = {
+                    "chat_id": incident['group_id'],
+                    "text": notice_text
+                }
+                if pinned_message_id:
+                    send_kwargs["reply_to_message_id"] = pinned_message_id
+
+                await self.bot.send_message(**send_kwargs)
+
+                # Clear any reminder tracking now that the incident is closed
+                self.clear_reminder_for_incident(incident_id)
+
+                logger.info(f"Auto-closed incident {incident_id} after summary timeout")
+
+            except TelegramError as e:
+                logger.error(f"Telegram error during auto-close for {incident_id}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error during auto-close for {incident_id}: {e}")
 
     def clear_reminder_for_incident(self, incident_id: str):
         """Clear reminder flags when an incident is claimed/resolved."""
