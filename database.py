@@ -1230,6 +1230,43 @@ class Database:
                 }
             return None
 
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """
+        Get user information by username.
+
+        Args:
+            username: Username with or without @ prefix (e.g., 'shjavohir' or '@shjavohir')
+
+        Returns:
+            User dict if found, None otherwise
+        """
+        # Normalize username by removing @ if present
+        normalized_username = username.lstrip('@').lower()
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM users WHERE LOWER(username) = ?",
+                (normalized_username,)
+            )
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    'user_id': row['user_id'],
+                    'telegram_handle': row['telegram_handle'],
+                    'username': row['username'],
+                    'first_name': row['first_name'],
+                    'last_name': row['last_name'],
+                    'language_code': row['language_code'],
+                    'is_bot': bool(row['is_bot']),
+                    'team_role': row['team_role'],
+                    'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                }
+            return None
+
     def get_user_handle_or_fallback(self, user_id: Optional[int]) -> str:
         """Return a readable handle for a user or a defensive fallback."""
         if not user_id:

@@ -4,7 +4,7 @@ Handlers module for Telegram bot commands and callbacks.
 
 import logging
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from telegram import Update, Chat
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
@@ -49,6 +49,71 @@ class BotHandlers:
         if user.username:
             return f"@{user.username}"
         return f"User_{user.id}"
+
+    def _resolve_user_mention(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                               arg_index: int = -1) -> Tuple[Optional[int], Optional[str], Optional[Any]]:
+        """
+        Resolve a user mention from message entities to user_id, handle, and user object.
+
+        Handles three cases:
+        1. text_mention: User without username (has full User object)
+        2. mention: Username mention (requires database lookup)
+        3. Numeric ID: Raw numeric user ID
+
+        Args:
+            update: Telegram Update object
+            context: Bot context
+            arg_index: Which argument to check (default -1 for last)
+
+        Returns:
+            Tuple of (user_id, user_handle, user_object)
+            - user_id: Telegram user ID if resolved, None otherwise
+            - user_handle: User handle (e.g., @username or @User_123)
+            - user_object: Full Telegram User object if available (only for text_mention)
+        """
+        if not update.message or not context.args:
+            return None, None, None
+
+        user_id = None
+        user_handle = None
+        user_object = None
+
+        # Check message entities for mentions
+        if update.message.entities:
+            for entity in update.message.entities:
+                if entity.type == "text_mention":
+                    # User doesn't have a username - we have full User object
+                    user_object = entity.user
+                    user_id = entity.user.id
+                    user_handle = self._get_user_handle(entity.user)
+                    return user_id, user_handle, user_object
+
+                elif entity.type == "mention":
+                    # Username mention - need to look up in database
+                    mentioned_username = context.args[arg_index]
+                    normalized_username = mentioned_username.lstrip('@')
+
+                    # Look up user in database
+                    db_user = self.db.get_user_by_username(normalized_username)
+                    if db_user:
+                        user_id = db_user['user_id']
+                        user_handle = f"@{db_user['username']}" if db_user.get('username') else f"@User_{user_id}"
+                        return user_id, user_handle, None
+                    else:
+                        # User mentioned but not in database
+                        user_handle = f"@{normalized_username}"
+                        return None, user_handle, None
+
+        # Fallback: Try to parse as numeric ID
+        if context.args:
+            try:
+                user_id = int(context.args[arg_index])
+                user_handle = None  # Will be filled later if needed
+                return user_id, user_handle, None
+            except (ValueError, IndexError):
+                pass
+
+        return None, None, None
 
     def _track_user_interaction(self, user, group_id: Optional[int] = None,
                                 team_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -548,66 +613,58 @@ class BotHandlers:
             )
             return
 
-        # Get mentioned user from entities (more reliable than parsing text)
-        dispatcher_id = None
-        dispatcher_handle = None
-        dispatcher_user_object = None  # Store full user object if available
+        # Resolve user mention using the helper method
+        dispatcher_id, dispatcher_handle, dispatcher_user_object = self._resolve_user_mention(update, context, arg_index=0)
 
-        if update.message.entities:
-            for entity in update.message.entities:
-                if entity.type == "text_mention":
-                    # User doesn't have a username - we have full User object
-                    dispatcher_user_object = entity.user
-                    dispatcher_id = entity.user.id
-                    dispatcher_handle = f"@User_{entity.user.id}"
-                    break
-                elif entity.type == "mention":
-                    # Extract username from message
-                    dispatcher_handle = context.args[0]
-                    if not dispatcher_handle.startswith('@'):
-                        dispatcher_handle = f"@{dispatcher_handle}"
-
-        if not dispatcher_handle:
-            dispatcher_handle = context.args[0]
-            if not dispatcher_handle.startswith('@'):
-                dispatcher_handle = f"@{dispatcher_handle}"
+        if not dispatcher_id:
+            # User mention was found but not in database
+            if dispatcher_handle:
+                await self._send_error_message(
+                    update,
+                    f"User {dispatcher_handle} has not interacted with the bot yet. "
+                    f"Please ask them to send any message to the bot first or use /register_driver."
+                )
+            else:
+                await self._send_error_message(
+                    update,
+                    "Please mention the user or provide their numeric Telegram user id."
+                )
+            return
 
         group_info = membership['group']
         company_info = membership.get('company')
 
-        # If we got the ID from text_mention, add them now
-        if dispatcher_id:
-            if company_info:
-                updated_dispatchers = list(company_info.get('dispatcher_user_ids', []))
-                if dispatcher_id not in updated_dispatchers:
-                    updated_dispatchers.append(dispatcher_id)
-                self.db.update_company_roles(
-                    company_id=company_info['company_id'],
-                    dispatcher_user_ids=updated_dispatchers
-                )
-                self.db.attach_group_to_company(
-                    group_id=group_info['group_id'],
-                    group_name=group_info['group_name'],
-                    company_id=company_info['company_id'],
-                    status='active'
-                )
-            else:
-                self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
-
-            # Use comprehensive tracking if we have the full user object
-            if dispatcher_user_object:
-                self._track_user_interaction(dispatcher_user_object, group_id=chat.id, team_role='Dispatcher')
-            else:
-                self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
-
-            await update.message.reply_text(
-                f"✅ Added {dispatcher_handle} as a dispatcher for this group."
+        # Add dispatcher to company or group
+        if company_info:
+            updated_dispatchers = list(company_info.get('dispatcher_user_ids', []))
+            if dispatcher_id not in updated_dispatchers:
+                updated_dispatchers.append(dispatcher_id)
+            self.db.update_company_roles(
+                company_id=company_info['company_id'],
+                dispatcher_user_ids=updated_dispatchers
+            )
+            self.db.attach_group_to_company(
+                group_id=group_info['group_id'],
+                group_name=group_info['group_name'],
+                company_id=company_info['company_id'],
+                status='active'
             )
         else:
-            await update.message.reply_text(
-                f"⚠️ Added {dispatcher_handle} to the dispatcher list.\n"
-                f"They will be fully registered when they interact with the bot."
-            )
+            self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
+
+        # Track user interaction
+        if dispatcher_user_object:
+            self._track_user_interaction(dispatcher_user_object, group_id=chat.id, team_role='Dispatcher')
+        elif dispatcher_handle:
+            self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
+        else:
+            # Ensure user record exists with fallback handle
+            self._ensure_user_role(dispatcher_id, 'Dispatcher', f"User_{dispatcher_id}")
+
+        display_name = dispatcher_handle if dispatcher_handle else f"User {dispatcher_id}"
+        await update.message.reply_text(
+            f"✅ Added {display_name} as a dispatcher for this group."
+        )
 
     async def _handle_platform_add_dispatcher(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Hidden platform-admin command to attach a dispatcher to a company."""
@@ -881,32 +938,23 @@ class BotHandlers:
             await self._send_error_message(update, "Department not found for this company.")
             return
 
-        target_user_id = None
-        target_handle = None
-        target_user_obj = None
-
-        if update.message.entities:
-            for entity in update.message.entities:
-                if entity.type == "text_mention":
-                    target_user_obj = entity.user
-                    target_user_id = entity.user.id
-                    target_handle = self._get_user_handle(entity.user)
-                    break
-                if entity.type == "mention":
-                    target_handle = context.args[-1]
-                    if not target_handle.startswith("@"):
-                        target_handle = f"@{target_handle}"
+        # Resolve user mention using the helper method
+        target_user_id, target_handle, target_user_obj = self._resolve_user_mention(update, context, arg_index=-1)
 
         if not target_user_id:
-            # allow raw numeric ID fallback
-            try:
-                target_user_id = int(context.args[-1])
-            except ValueError:
+            # User mention was found but not in database
+            if target_handle:
+                await self._send_error_message(
+                    update,
+                    f"User {target_handle} has not interacted with the bot yet. "
+                    f"Please ask them to send any message to the bot first or use /register_driver."
+                )
+            else:
                 await self._send_error_message(
                     update,
                     "Please mention the user or provide their numeric Telegram user id."
                 )
-                return
+            return
 
         self.db.add_member_to_department(department_id, target_user_id)
 
@@ -915,8 +963,9 @@ class BotHandlers:
         elif target_handle:
             self.db.upsert_user(target_user_id, target_handle, team_role=None)
 
+        display_name = target_handle if target_handle else f"User {target_user_id}"
         await update.message.reply_text(
-            f"✅ Added user {target_user_id} to department {department['name']} (ID {department_id})."
+            f"✅ Added {display_name} to department {department['name']} (ID {department_id})."
         )
 
     async def register_driver_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
