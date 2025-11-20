@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu,
   X,
+  UserPlus,
 } from 'lucide-react';
 
 interface SessionData {
@@ -85,6 +86,11 @@ export default function DashboardLayout({
       name: 'Groups',
       href: '/dashboard/groups',
       icon: MessageSquare,
+    },
+    {
+      name: 'Join Requests',
+      href: '/dashboard/join-requests',
+      icon: UserPlus,
     },
     {
       name: 'Reports',

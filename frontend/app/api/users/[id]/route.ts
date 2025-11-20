@@ -27,20 +27,45 @@ export async function GET(
 
     // Get user's departments
     const departments = db.prepare(`
-      SELECT d.* FROM departments d
+      SELECT d.*, dm.added_at FROM departments d
       JOIN department_members dm ON d.department_id = dm.department_id
       WHERE dm.user_id = ? AND d.company_id = ?
+      ORDER BY d.name
     `).all(id, session.companyId);
 
+    // Get user's groups (active groups they're connected to)
+    const groups = db.prepare(`
+      SELECT g.* FROM groups g, json_each(?) AS gc
+      WHERE gc.value = g.group_id
+        AND g.company_id = ?
+        AND g.status = 'active'
+      ORDER BY g.group_name
+    `).all(user.group_connections || '[]', session.companyId);
+
     // Get user's incident stats
-    const stats = db.prepare(`
+    const createdStats = db.prepare(`
       SELECT
-        COUNT(DISTINCT CASE WHEN ip.status IN ('active', 'resolved_self', 'resolved_other') THEN i.incident_id END) as total_incidents,
-        COUNT(DISTINCT CASE WHEN ip.status = 'resolved_self' THEN i.incident_id END) as resolved_incidents,
-        COUNT(DISTINCT CASE WHEN ip.is_active = 1 THEN i.incident_id END) as active_incidents
-      FROM incident_participants ip
-      JOIN incidents i ON ip.incident_id = i.incident_id
-      WHERE ip.user_id = ? AND i.company_id = ?
+        COUNT(*) as total_created,
+        COUNT(CASE WHEN status = 'Resolved' OR status = 'Closed' THEN 1 END) as created_resolved,
+        COUNT(CASE WHEN status NOT IN ('Resolved', 'Closed') THEN 1 END) as created_active
+      FROM incidents
+      WHERE created_by_id = ? AND company_id = ?
+    `).get(id, session.companyId) as any;
+
+    const claimedStats = db.prepare(`
+      SELECT
+        COUNT(DISTINCT ic.incident_id) as total_claimed,
+        COUNT(DISTINCT CASE WHEN i.status = 'Resolved' OR i.status = 'Closed' THEN ic.incident_id END) as claimed_resolved,
+        COUNT(DISTINCT CASE WHEN i.status NOT IN ('Resolved', 'Closed') THEN ic.incident_id END) as claimed_active
+      FROM incident_claims ic
+      JOIN incidents i ON ic.incident_id = i.incident_id
+      WHERE ic.user_id = ? AND i.company_id = ?
+    `).get(id, session.companyId) as any;
+
+    const resolvedByStats = db.prepare(`
+      SELECT COUNT(*) as resolved_by_count
+      FROM incidents
+      WHERE resolved_by_user_id = ? AND company_id = ?
     `).get(id, session.companyId) as any;
 
     return NextResponse.json({
@@ -56,10 +81,15 @@ export async function GET(
       created_at: user.created_at,
       updated_at: user.updated_at,
       departments,
+      groups,
       stats: {
-        total_incidents: stats.total_incidents || 0,
-        resolved_incidents: stats.resolved_incidents || 0,
-        active_incidents: stats.active_incidents || 0,
+        incidents_created: createdStats.total_created || 0,
+        incidents_created_resolved: createdStats.created_resolved || 0,
+        incidents_created_active: createdStats.created_active || 0,
+        incidents_claimed: claimedStats.total_claimed || 0,
+        incidents_claimed_resolved: claimedStats.claimed_resolved || 0,
+        incidents_claimed_active: claimedStats.claimed_active || 0,
+        incidents_resolved_by: resolvedByStats.resolved_by_count || 0,
       },
     });
   } catch (error) {

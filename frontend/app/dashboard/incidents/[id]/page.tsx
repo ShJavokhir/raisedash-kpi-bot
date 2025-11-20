@@ -80,7 +80,12 @@ export default function IncidentDetailPage() {
               </div>
               <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
                 Created {formatDate(incident.t_created)} by{' '}
-                {incident.created_by_first_name || incident.created_by_username || `User ${incident.created_by_id}`}
+                <Link
+                  href={`/dashboard/users/${incident.created_by_id}`}
+                  className="text-neutral-700 hover:text-blue-600 hover:underline font-medium"
+                >
+                  {incident.created_by_first_name || incident.created_by_username || `User ${incident.created_by_id}`}
+                </Link>
               </p>
             </div>
             <span className={`badge ${
@@ -194,10 +199,17 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              {incident.resolved_by_first_name && (
+              {incident.resolved_by_first_name && incident.resolved_by_user_id && (
                 <div className="py-2">
                   <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Resolved By</dt>
-                  <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.resolved_by_first_name}</dd>
+                  <dd className="text-xs text-neutral-900 uppercase tracking-wide">
+                    <Link
+                      href={`/dashboard/users/${incident.resolved_by_user_id}`}
+                      className="hover:text-blue-600 hover:underline"
+                    >
+                      {incident.resolved_by_first_name}
+                    </Link>
+                  </dd>
                 </div>
               )}
             </dl>

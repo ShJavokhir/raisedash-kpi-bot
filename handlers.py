@@ -442,20 +442,20 @@ class BotHandlers:
             requested_by_handle=requester_handle
         )
 
-        admin_notification = (
-            "🚨 New KPI Bot activation request\n"
-            f"Group: {group['group_name']} ({group['group_id']})\n"
-            f"Company: {requested_name}\n"
-            f"Requested by: {requester_handle} ({requester.id})"
+        # Platform admin notifications disabled - join requests are now managed via dashboard
+        # Company admins can approve/deny requests through the frontend dashboard
+        logger.info(
+            f"Join request submitted: Group {group['group_name']} ({group['group_id']}) "
+            f"requesting company '{requested_name}' by {requester_handle} ({requester.id})"
         )
 
-        for admin_id in self.platform_admin_ids:
-            try:
-                await context.bot.send_message(chat_id=admin_id, text=admin_notification)
-            except TelegramError as exc:
-                logger.error(f"Failed to notify platform admin {admin_id}: {exc}")
-
-        await message.reply_text("Group will be activated soon and I will notify when it's activated.")
+        await message.reply_text(
+            f"✅ Your request has been submitted!\n\n"
+            f"Company: {requested_name}\n"
+            f"Group: {group['group_name']}\n\n"
+            f"The company administrators will review your request through their dashboard. "
+            f"You will be notified once your group has been activated."
+        )
 
         self._log_audit_event(
             "group_activation_requested",
