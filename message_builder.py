@@ -1,6 +1,4 @@
-"""
-Message builder module for constructing incident messages and inline keyboards.
-"""
+"""Message builder module for constructing incident messages and inline keyboards."""
 
 from typing import Dict, Any, Optional, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,125 +8,97 @@ class MessageBuilder:
     """Builds formatted messages and inline keyboards for incident states."""
 
     @staticmethod
-    def build_unclaimed_message(incident: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
-        """Build message for unclaimed incident (State 1).
+    def _chunk_buttons(buttons: List[InlineKeyboardButton], per_row: int = 2) -> List[List[InlineKeyboardButton]]:
+        return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
 
-        Structured layout with dividers to improve readability.
-        """
+    def build_department_selection(self, incident: Dict[str, Any],
+                                   departments: List[Dict[str, Any]],
+                                   prompt: str,
+                                   callback_prefix: str) -> tuple[str, InlineKeyboardMarkup]:
+        """Build message prompting for department selection."""
         text = (
-            "🚨 NEW INCIDENT\n"
+            "🚨 NEW ISSUE\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
-            f"Status: 🔥 UNCLAIMED\n"
+            "Status: 🗂️ Choose department\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Tier 1 dispatchers: Claim this incident if you are taking ownership. "
-            "More than one responder can work on the same issue."
+            f"{prompt}"
+        )
+
+        buttons = [
+            InlineKeyboardButton(dept['name'], callback_data=f"{callback_prefix}:{incident['incident_id']}:{dept['department_id']}")
+            for dept in departments
+        ]
+        keyboard = InlineKeyboardMarkup(self._chunk_buttons(buttons, per_row=2))
+        return text, keyboard
+
+    def build_unclaimed_message(self, incident: Dict[str, Any], department_name: str) -> tuple[str, InlineKeyboardMarkup]:
+        """Build message for unclaimed incident within a department."""
+        text = (
+            "🚨 INCIDENT READY FOR CLAIM\n"
+            "------------------------------\n"
+            f"ID: {incident['incident_id']}\n"
+            f"Department: {department_name}\n"
+            "Status: 🔔 Awaiting claim\n"
+            "------------------------------\n"
+            f"Reported by: {incident['created_by_handle']}\n"
+            "Issue:\n"
+            f"{incident['description']}\n"
+            "------------------------------\n"
+            "Tap Claim if you're taking this. You can still change the department if it belongs elsewhere."
         )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Claim", callback_data=f"claim_t1:{incident['incident_id']}")]
+            [InlineKeyboardButton("✅ Claim", callback_data=f"claim:{incident['incident_id']}")],
+            [InlineKeyboardButton("🔀 Change department", callback_data=f"change_department:{incident['incident_id']}")]
         ])
 
         return text, keyboard
 
-    @staticmethod
-    def build_claimed_t1_message(incident: Dict[str, Any],
-                                 claimer_handles: List[str]) -> tuple[str, InlineKeyboardMarkup]:
-        """Build message for Tier 1 claimed incident (State 2)."""
+    def build_claimed_message(self, incident: Dict[str, Any], claimer_handles: List[str],
+                              department_name: str) -> tuple[str, InlineKeyboardMarkup]:
+        """Build message for claimed incident."""
         responders = ", ".join(claimer_handles) if claimer_handles else "—"
         text = (
-            "🚨 INCIDENT IN PROGRESS (Tier 1)\n"
+            "🚨 INCIDENT IN PROGRESS\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
-            f"Status: 🛠️ IN PROGRESS\n"
-            f"Tier 1 dispatchers: {responders}\n"
+            f"Department: {department_name}\n"
+            "Status: 🛠️ In progress\n"
+            f"Active: {responders}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Other Tier 1 dispatchers can join or leave as needed. "
-            "Escalate to a manager only if Tier 1 needs support."
+            "Others from the department can join. Resolve when you've handled it, "
+            "or move it to another department if needed."
         )
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Join", callback_data=f"claim_t1:{incident['incident_id']}"),
-                InlineKeyboardButton("❌ Leave", callback_data=f"release_t1:{incident['incident_id']}"),
-                InlineKeyboardButton("⬆️ Escalate", callback_data=f"escalate:{incident['incident_id']}")
+                InlineKeyboardButton("✅ Join", callback_data=f"claim:{incident['incident_id']}"),
+                InlineKeyboardButton("❌ Leave", callback_data=f"release:{incident['incident_id']}")
             ],
-            [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t1:{incident['incident_id']}")]
-        ])
-
-        return text, keyboard
-
-    def build_escalated_message(self, incident: Dict[str, Any], escalated_by_handle: str,
-                                tier1_handles: List[str]) -> tuple[str, InlineKeyboardMarkup]:
-        """Build message for escalated incident (State 3)."""
-        responders = ", ".join(tier1_handles) if tier1_handles else "—"
-        text = (
-            "🚨 INCIDENT ESCALATED\n"
-            "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
-            "Status: 🆘 ESCALATED – Awaiting manager\n"
-            "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
-            f"Escalated by: {escalated_by_handle}\n"
-            f"Tier 1 dispatchers on it: {responders}\n"
-            "Issue:\n"
-            f"{incident['description']}\n"
-            "------------------------------\n"
-            "Managers: Claim this escalation if you are taking ownership. "
-            "Other managers may also join to assist."
-        )
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛡️ Claim Escalation", callback_data=f"claim_t2:{incident['incident_id']}")]
-        ])
-
-        return text, keyboard
-
-    def build_claimed_t2_message(self, incident: Dict[str, Any],
-                                 manager_handles: List[str],
-                                 tier1_handles: Optional[List[str]] = None) -> tuple[str, InlineKeyboardMarkup]:
-        """Build message for Tier 2 claimed incident (State 4)."""
-        managers = ", ".join(manager_handles) if manager_handles else "—"
-        dispatchers = ", ".join(tier1_handles or []) if tier1_handles else "—"
-        text = (
-            "🚨 INCIDENT IN PROGRESS (Tier 2)\n"
-            "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
-            f"Status: 🛠️ IN PROGRESS\n"
-            f"Managers: {managers}\n"
-            "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
-            f"Tier 1 dispatchers: {dispatchers}\n"
-            "Issue:\n"
-            f"{incident['description']}\n"
-            "------------------------------\n"
-            "Managers: Resolve when the issue is fully addressed. Other managers may join to assist."
-        )
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Join", callback_data=f"claim_t2:{incident['incident_id']}")],
-            [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve_t2:{incident['incident_id']}")]
+            [InlineKeyboardButton("🏁 Resolve", callback_data=f"resolve:{incident['incident_id']}")],
+            [InlineKeyboardButton("🔀 Change department", callback_data=f"change_department:{incident['incident_id']}")]
         ])
 
         return text, keyboard
 
     @staticmethod
     def build_awaiting_summary_message(incident: Dict[str, Any], resolver_handle: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
-        """Build message for awaiting summary state (State 5)."""
+        """Build message for awaiting summary state."""
         text = (
             "📄 INCIDENT AWAITING RESOLUTION SUMMARY\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Resolver: {resolver_handle}\n"
-            "Status: ⌛ AWAITING SUMMARY\n"
+            "Status: ⌛ Awaiting summary\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
             "Issue:\n"
@@ -136,18 +106,16 @@ class MessageBuilder:
             "------------------------------\n"
             f"{resolver_handle}, please reply to this message with a short resolution summary (1–3 sentences)."
         )
-
-        # No buttons in this state
         return text, None
 
     @staticmethod
     def build_resolved_message(incident: Dict[str, Any], resolver_handle: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
-        """Build message for resolved incident (State 6)."""
+        """Build message for resolved incident."""
         text = (
             "✅ INCIDENT RESOLVED\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
-            "Status: ✅ RESOLVED\n"
+            "Status: ✅ Resolved\n"
             f"Resolved by: {resolver_handle}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
@@ -157,8 +125,6 @@ class MessageBuilder:
             "Resolution summary:\n"
             f"{incident['resolution_summary']}"
         )
-
-        # Could add a Re-Open button here if needed
         return text, None
 
     @staticmethod
@@ -169,7 +135,7 @@ class MessageBuilder:
             "❌ INCIDENT CLOSED\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
-            "Status: ❌ CLOSED\n"
+            "Status: ❌ Closed\n"
             f"Closed by: {closed_by_text}\n"
             f"Reason: {reason}\n"
             "------------------------------\n"
@@ -180,29 +146,7 @@ class MessageBuilder:
             "Resolution summary:\n"
             f"{incident.get('resolution_summary', 'No summary provided.')}"
         )
-
         return text, None
-
-    @staticmethod
-    def build_auto_close_notice(incident_id: str, user_handle: str, minutes: int) -> str:
-        """Build concise notice when summary timeout closes an incident."""
-        return (
-            f"Auto-closed {incident_id} after waiting {minutes} minutes for {user_handle}'s summary. "
-            "Reopen manually if more details are needed."
-        )
-
-    @staticmethod
-    def build_escalation_notification(incident_id: str, manager_handles: list[str]) -> str:
-        """Build notification message for managers when incident is escalated."""
-        managers_text = ", ".join(manager_handles)
-        return (
-            "🔔 Escalation notification\n"
-            "------------------------------\n"
-            f"Incident: {incident_id}\n"
-            f"Managers: {managers_text}\n"
-            "------------------------------\n"
-            "Please review the pinned incident message and claim the escalation if you are taking ownership."
-        )
 
     @staticmethod
     def build_resolution_request(incident_id: str, user_handle: str) -> str:
@@ -213,27 +157,32 @@ class MessageBuilder:
         )
 
     @staticmethod
-    def build_unclaimed_reminder(incident_id: str, minutes: int) -> str:
+    def build_unclaimed_reminder(incident_id: str, minutes: int, department_name: Optional[str]) -> str:
         """Build reminder message for unclaimed incident."""
+        department_line = f"Department: {department_name}\n" if department_name else ""
         return (
             "⏰ Unclaimed incident reminder\n"
             "------------------------------\n"
             f"Incident: {incident_id}\n"
+            f"{department_line}"
             f"Unclaimed for: {minutes} minutes\n"
             "------------------------------\n"
-            "Tier 1 dispatchers: Please review the pinned incident message and claim it if you are taking ownership."
+            "Please review the pinned incident message and claim it if you are taking ownership."
         )
 
     @staticmethod
-    def build_escalation_reminder(incident_id: str, minutes: int, manager_handles: list[str]) -> str:
-        """Build reminder message for unclaimed escalation."""
-        managers_text = ", ".join(manager_handles)
+    def build_auto_close_notice(incident_id: str, user_handle: str, minutes: int) -> str:
+        """Build concise notice when summary timeout closes an incident."""
         return (
-            "⏰ Escalation reminder\n"
-            "------------------------------\n"
-            f"Incident: {incident_id}\n"
-            f"Waiting for manager claim: {minutes} minutes\n"
-            f"Managers: {managers_text}\n"
-            "------------------------------\n"
-            "Managers: Please review the pinned incident message and claim the escalation if you are taking ownership."
+            f"Auto-closed {incident_id} after waiting {minutes} minutes for {user_handle}'s summary. "
+            "Reopen manually if more details are needed."
+        )
+
+    @staticmethod
+    def build_department_ping(department_handles: List[str], incident_id: str) -> str:
+        """Build message tagging department members when assigned."""
+        mentions = " ".join(department_handles)
+        return (
+            f"🔔 {mentions}\n"
+            f"Please review incident {incident_id} and claim it if you are taking ownership."
         )

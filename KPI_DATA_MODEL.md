@@ -1,27 +1,33 @@
-# KPI Data Model
+# KPI Data Model (Department-Based)
 
-This bot now captures per-user participation data that supports fair KPI reporting even when multiple dispatchers swarm a single issue.
+The bot captures department-centric participation data that supports fair KPI reporting when incidents move between departments or multiple members swarm a single issue.
 
-## New/Updated Tables
+## Key Tables
 
 - **incidents**
-  - `escalated_by_user_id` – who pushed to Tier 2.
-  - `resolved_by_user_id` / `resolved_by_tier` – who actually provided the resolution.
-- **incident_participants** (one row per incident/user/tier)
-  - Tracks joins/leaves, total active seconds, join count, and how their participation ended (`status`: `active`, `released`, `resolved_self`, `resolved_other`, `escalated`, `closed`).
-  - `active_since` + `total_active_seconds` allow accurate time-in-incident even with multiple joins.
-  - `resolved_at` and `outcome_detail` give attribution for the final state.
+  - `department_id` – current department handling the incident.
+  - `t_department_assigned` – timestamp when the current department was set.
+  - `t_first_claimed` / `t_last_claimed` – first and most recent claim timestamps.
+  - `t_resolved` – resolution/close timestamp.
+  - `status` – `Awaiting_Department`, `Awaiting_Claim`, `In_Progress`, `Awaiting_Summary`, `Resolved`, `Closed`.
+- **incident_department_sessions**
+  - Tracks each department assignment window with `assigned_at`, optional `claimed_at`, `released_at`, and `status` (`active`, `transferred`, `resolved`, `closed`).
+- **incident_claims**
+  - Multiple concurrent claimants per incident, scoped to `department_id`, with `claimed_at`, `released_at`, `is_active`.
+- **incident_participants** (one row per incident/user/department)
+  - Joins/leaves, total active seconds, join count, status (`active`, `released`, `resolved_self`, `resolved_other`, `transferred`, `closed`), `active_since`, `resolved_at`, `outcome_detail`.
 - **incident_events**
-  - Append-only log of lifecycle events (`create`, `claim_t1`, `release_t1`, `escalate`, `claim_t2`, `resolution_requested`, `resolve`) with actor, tier, and timestamp for auditing and SLA math.
+  - Append-only log of lifecycle events (`create`, `department_assigned`, `claim`, `release`, `resolution_requested`, `resolve`, `auto_closed`) with actor and metadata.
 
-## How KPIs Are Derived
+## KPI Calculation Notes
 
-1. **Start time per responder** – each successful `claim_t1`/`claim_t2` inserts/activates an `incident_participants` row with `active_since` set to the claim timestamp.
-2. **Active duration** – on `release_t1` or incident resolution, durations are accrued into `total_active_seconds` using `active_since`. Multiple joins increment `join_count` and continue accumulating.
-3. **Attribution when many responders join**  
-   - The resolver gets `status=resolved_self` and keeps all accrued time.  
-   - Other active responders are closed with `status=resolved_other` at the resolution timestamp (they keep their active time but are not credited as resolver).  
-   - Responders who left earlier keep `status=released`; they are not credited for the resolution.
-4. **Escalation context** – `escalated_by_user_id` on the incident plus an `escalate` event provide time-to-escalate metrics per dispatcher and per ticket.
+1. **Time to Claim** – measured from `t_department_assigned` (or `t_created` fallback) to `t_first_claimed`.
+2. **Active Duration per Member** – accrued in `incident_participants.total_active_seconds` whenever a user claims; multiple joins increment `join_count` and reactivate `active_since`.
+3. **Attribution with Multiple Claimants**
+   - Resolver receives `status=resolved_self` and keeps accrued time.
+   - Other active responders closed with `status=resolved_other` at resolution time.
+   - Members removed during a department transfer are marked `transferred`.
+4. **Department Transfers** – active claims are finalized as `transferred`, the active department session is closed, and a new session starts with a fresh `t_department_assigned`.
+5. **Auto-Close** – unresolved incidents waiting for a summary set `status=Closed`, finalize active participants, and stop SLA timers.
 
-These records are intended for downstream reporting; no report generation is implemented here.
+These records enable downstream reporting of end-to-end SLA performance, participation fairness, and department-level throughput.

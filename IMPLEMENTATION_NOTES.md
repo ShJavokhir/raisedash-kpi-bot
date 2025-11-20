@@ -209,12 +209,13 @@ cursor.execute("PRAGMA journal_mode=WAL")
 **Recommended Test Coverage**:
 
 1. **Unit Tests**:
-   - Database operations (create, claim, escalate, resolve)
+   - Database operations (create, assign department, claim, resolve)
    - Race condition scenarios
    - Message builder formatting
 
 2. **Integration Tests**:
-   - Full workflow: create → claim → escalate → claim → resolve
+   - Full workflow: create → assign department → claim → resolve
+   - Department change flow
    - Authorization failures
    - Concurrent claims
 

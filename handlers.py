@@ -380,17 +380,18 @@ class BotHandlers:
             "👋 Welcome to the Raisedash KPI Bot!\n\n"
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
-                
-            "/configure_managers @user1 @user2 - Configure managers for this group (Admin only)\n"
-            "/add_dispatcher @user - Add a dispatcher to this group (Admin only)\n"
+            "/add_department <name> - Create a department for this company (Admin only)\n"
+            "/add_department_member <department_id> <@user> - Add a member to a department (Admin only)\n"
+            "/list_departments - Show configured departments for this company\n"
             "/register_driver - Register yourself as a driver\n"
-            "/new_issue <description> - Create a new incident\n\n"
+            "/new_issue - Reply to an issue message with /new_issue to start a ticket\n\n"
             "🔧 Features:\n"
-            "- Button-based workflow (no more typing commands!)\n"
+            "- Department-based workflow (no more tiers)\n"
+            "- Button-based interactions end-to-end\n"
             "- Automatic SLA reminders\n"
             "- Race condition protection\n"
             "- Per-group isolation\n\n"
-            "Start by configuring managers with /configure_managers!"
+            "Start by adding at least one department with /add_department."
         )
         await update.message.reply_text(welcome_message)
 
@@ -787,6 +788,137 @@ class BotHandlers:
             activated_by=user.id
         )
 
+    async def add_department_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Group admin command to create a department for the current company."""
+        if not self._is_group_chat(update.effective_chat):
+            await self._send_error_message(update, "This command only works in groups.")
+            return
+
+        user = update.effective_user
+        chat = update.effective_chat
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ['creator', 'administrator']:
+            await self._send_error_message(update, "Only group admins can add departments.")
+            return
+
+        membership = await self._require_active_group(update, context)
+        if not membership:
+            return
+
+        company_id = membership['group'].get('company_id')
+        if not company_id:
+            await self._send_error_message(update, "This group is not attached to a company.")
+            return
+
+        if not context.args:
+            await update.message.reply_text("Usage: /add_department <name>")
+            return
+
+        name = " ".join(context.args).strip()
+        if len(name) < 2:
+            await self._send_error_message(update, "Department name is too short.")
+            return
+
+        try:
+            dept_id = self.db.create_department(company_id, name)
+        except ValueError as exc:
+            await self._send_error_message(update, str(exc))
+            return
+
+        await update.message.reply_text(
+            f"✅ Department '{name}' created with ID {dept_id}."
+        )
+
+    async def list_departments_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List configured departments for the company."""
+        membership = await self._require_active_group(update, context)
+        if not membership:
+            return
+
+        company_id = membership['group'].get('company_id')
+        if not company_id:
+            await self._send_error_message(update, "This group is not attached to a company.")
+            return
+
+        departments = self.db.list_company_departments(company_id)
+        if not departments:
+            await update.message.reply_text("No departments configured yet. Use /add_department to create one.")
+            return
+
+        lines = [f"{dept['department_id']}: {dept['name']}" for dept in departments]
+        await update.message.reply_text("🏢 Departments:\n" + "\n".join(lines))
+
+    async def add_department_member_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Add a user to a department (admin only)."""
+        if not self._is_group_chat(update.effective_chat):
+            await self._send_error_message(update, "This command only works in groups.")
+            return
+
+        user = update.effective_user
+        chat = update.effective_chat
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ['creator', 'administrator']:
+            await self._send_error_message(update, "Only group admins can add members to departments.")
+            return
+
+        membership = await self._require_active_group(update, context)
+        if not membership:
+            return
+
+        company_id = membership['group'].get('company_id')
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("Usage: /add_department_member <department_id> <@user|user_id>")
+            return
+
+        try:
+            department_id = int(context.args[0])
+        except ValueError:
+            await self._send_error_message(update, "department_id must be a number.")
+            return
+
+        department = self.db.get_department(department_id)
+        if not department or department['company_id'] != company_id:
+            await self._send_error_message(update, "Department not found for this company.")
+            return
+
+        target_user_id = None
+        target_handle = None
+        target_user_obj = None
+
+        if update.message.entities:
+            for entity in update.message.entities:
+                if entity.type == "text_mention":
+                    target_user_obj = entity.user
+                    target_user_id = entity.user.id
+                    target_handle = self._get_user_handle(entity.user)
+                    break
+                if entity.type == "mention":
+                    target_handle = context.args[-1]
+                    if not target_handle.startswith("@"):
+                        target_handle = f"@{target_handle}"
+
+        if not target_user_id:
+            # allow raw numeric ID fallback
+            try:
+                target_user_id = int(context.args[-1])
+            except ValueError:
+                await self._send_error_message(
+                    update,
+                    "Please mention the user or provide their numeric Telegram user id."
+                )
+                return
+
+        self.db.add_member_to_department(department_id, target_user_id)
+
+        if target_user_obj:
+            self._track_user_interaction(target_user_obj, group_id=chat.id)
+        elif target_handle:
+            self.db.upsert_user(target_user_id, target_handle, team_role=None)
+
+        await update.message.reply_text(
+            f"✅ Added user {target_user_id} to department {department['name']} (ID {department_id})."
+        )
+
     async def register_driver_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /register_driver command."""
         user = update.effective_user
@@ -816,19 +948,21 @@ class BotHandlers:
             return
 
         group_info = membership['group']
+        company_id = group_info.get('company_id')
 
-        # Parse issue description
-        if not context.args:
-            await update.message.reply_text(
-                "Usage: /new_issue <description>\n"
-                "Example: /new_issue Truck 123 has a flat tire"
+        # Require the command to be a reply to the issue description
+        origin_message = update.message.reply_to_message if update.message else None
+        description = (origin_message.text if origin_message and origin_message.text else None) \
+            or (origin_message.caption if origin_message and origin_message.caption else None)
+
+        if not origin_message or not description:
+            await self._send_error_message(
+                update,
+                "Please reply to the message describing the issue and run /new_issue from that reply."
             )
             return
 
-        description = " ".join(context.args)
-
-        # Validate description length (Telegram message limit is 4096 chars)
-        # Reserve space for the message template, so limit description to 3000 chars
+        description = description.strip()
         MAX_DESCRIPTION_LENGTH = 3000
         if len(description) > MAX_DESCRIPTION_LENGTH:
             await self._send_error_message(
@@ -837,10 +971,19 @@ class BotHandlers:
             )
             return
 
-        if len(description.strip()) < 5:
+        if len(description) < 5:
             await self._send_error_message(
                 update,
                 "Description too short. Please provide more details (at least 5 characters)."
+            )
+            return
+
+        departments = self.db.list_company_departments(company_id) if company_id else []
+        if not departments:
+            await self._send_error_message(
+                update,
+                "No departments are configured for this company yet. "
+                "Ask an admin to run /add_department first."
             )
             return
 
@@ -856,7 +999,7 @@ class BotHandlers:
             level="info",
             data={
                 "group_id": chat.id,
-                "company_id": group_info.get('company_id'),
+                "company_id": company_id,
                 "description_length": len(description)
             }
         )
@@ -867,7 +1010,8 @@ class BotHandlers:
             created_by_id=user.id,
             created_by_handle=user_handle,
             description=description,
-            company_id=group_info.get('company_id')
+            company_id=company_id,
+            source_message_id=origin_message.message_id
         )
 
         # Set incident context for Sentry
@@ -875,27 +1019,27 @@ class BotHandlers:
         SentryConfig.set_context("incident", {
             "incident_id": incident_id,
             "group_id": chat.id,
-            "company_id": group_info.get('company_id'),
+            "company_id": company_id,
             "created_by": user_handle
         })
 
-        # Get the incident to build the message
+        # Build and send the interactive message to choose department
         incident = self.db.get_incident(incident_id)
-
-        # Build and send the interactive message
-        text, keyboard = self.message_builder.build_unclaimed_message(incident)
+        text, keyboard = self.message_builder.build_department_selection(
+            incident,
+            departments,
+            prompt="Choose the department to handle this issue.",
+            callback_prefix="select_department"
+        )
 
         try:
-            # Send the message
             sent_message = await update.message.reply_text(
                 text,
                 reply_markup=keyboard
             )
 
-            # Update incident with message ID
             self.db.update_incident_message_id(incident_id, sent_message.message_id)
 
-            # Pin the message
             await context.bot.pin_chat_message(
                 chat_id=chat.id,
                 message_id=sent_message.message_id,
@@ -929,291 +1073,217 @@ class BotHandlers:
 
         logger.info(f"Callback: {callback_data} from user {user.id} in chat {chat.id}")
 
-        # Add breadcrumb for callback action
-        SentryConfig.add_breadcrumb(
-            message=f"User callback: {callback_data}",
-            category="user_action",
-            level="info",
-            data={
-                "user_id": user.id if user else None,
-                "chat_id": chat.id if chat else None,
-                "callback_data": callback_data
-            }
-        )
-
         try:
             membership = await self._require_active_group(update, context, chat)
             if not membership:
                 return
 
-            # Parse callback data
-            action, incident_id = callback_data.split(':', 1)
+            parts = callback_data.split(':')
+            action = parts[0]
 
-            # Route to appropriate handler
-            if action == 'claim_t1':
-                await self._handle_claim_t1(query, user, chat, incident_id, membership)
-            elif action == 'release_t1':
-                await self._handle_release_t1(query, user, chat, incident_id)
-            elif action == 'escalate':
-                await self._handle_escalate(query, user, chat, incident_id, context, membership)
-            elif action == 'claim_t2':
-                await self._handle_claim_t2(query, user, chat, incident_id, membership)
-            elif action == 'resolve_t1':
-                await self._handle_resolve_t1(query, user, chat, incident_id, context)
-            elif action == 'resolve_t2':
-                await self._handle_resolve_t2(query, user, chat, incident_id, context)
+            if action == 'select_department' and len(parts) == 3:
+                incident_id, department_id = parts[1], int(parts[2])
+                await self._handle_select_department(query, user, chat, context, incident_id, department_id)
+            elif action == 'reassign_department' and len(parts) == 3:
+                incident_id, department_id = parts[1], int(parts[2])
+                await self._handle_reassign_department(query, user, chat, context, incident_id, department_id)
+            elif action == 'change_department' and len(parts) == 2:
+                incident_id = parts[1]
+                await self._handle_change_department(query, user, chat, incident_id, membership)
+            elif action == 'claim' and len(parts) == 2:
+                incident_id = parts[1]
+                await self._handle_claim(query, user, chat, incident_id)
+            elif action == 'release' and len(parts) == 2:
+                incident_id = parts[1]
+                await self._handle_release(query, user, chat, incident_id)
+            elif action == 'resolve' and len(parts) == 2:
+                incident_id = parts[1]
+                await self._handle_resolve(query, user, chat, incident_id, context)
             else:
                 await query.answer("Unknown action", show_alert=True)
 
         except ValueError:
             logger.error(f"Invalid callback data format: {callback_data}")
-            SentryConfig.capture_message(
-                f"Invalid callback data: {callback_data}",
-                level="warning",
-                callback_data=callback_data
-            )
             await query.answer("Invalid button data", show_alert=True)
+
         except Exception as e:
             logger.error(f"Error handling callback: {e}", exc_info=True)
             SentryConfig.capture_exception(e, callback_data=callback_data)
             await query.answer("An error occurred. Please try again.", show_alert=True)
 
-    async def _handle_claim_t1(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
-        """Handle Tier 1 claim button."""
-        # Set incident context
-        SentryConfig.set_tag("incident_id", incident_id)
-        SentryConfig.add_breadcrumb(
-            message=f"T1 claim attempt on {incident_id}",
-            category="incident_action",
-            level="info",
-            data={"incident_id": incident_id, "user_id": user.id}
-        )
-
-        # Check if user is authorized dispatcher
-        dispatcher_ids = self._collect_dispatcher_ids(membership)
-        if user.id not in dispatcher_ids:
-            logger.warning(
-                f"Unauthorized T1 claim attempt on {incident_id} by user {user.id} in chat {chat.id}"
-            )
-            await query.answer(
-                "You are not authorized to claim issues. Please ask an admin to add you as a dispatcher.",
-                show_alert=True
-            )
+    async def _handle_select_department(self, query, user, chat, context: ContextTypes.DEFAULT_TYPE,
+                                        incident_id: str, department_id: int):
+        """Handle initial department selection by the ticket creator."""
+        incident = self.db.get_incident(incident_id)
+        if not incident:
+            await query.answer("Incident not found.", show_alert=True)
             return
 
-        # Attempt atomic claim
-        success, message = self.db.claim_tier1(incident_id, user.id)
+        if incident['created_by_id'] != user.id:
+            await query.answer("Only the reporter can choose the department.", show_alert=True)
+            return
 
-        if success:
-            # Update the message
-            incident = self.db.get_incident(incident_id)
-            if not incident:
-                await query.answer("Incident not found. Please refresh.", show_alert=True)
-                return
-            claimer_handles = self.db.get_active_claim_handles(incident_id, tier=1)
-            text, keyboard = self.message_builder.build_claimed_t1_message(incident, claimer_handles)
-
-            try:
-                logger.info(
-                    f"Updating incident {incident_id} message to claimed state by user {user.id}"
-                )
-                await query.edit_message_text(text, reply_markup=keyboard)
-                await query.answer("Incident claimed successfully!")
-            except TelegramError as e:
-                logger.error(f"Error editing message for {incident_id}: {e}")
-                await query.answer("Claimed, but couldn't update message. Please refresh.", show_alert=True)
-        else:
+        success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
+        if not success:
             await query.answer(message, show_alert=True)
+            return
 
-    async def _handle_release_t1(self, query, user, chat, incident_id: str):
-        """Handle Leave Claim button."""
-        success, message = self.db.release_tier1_claim(incident_id, user.id)
+        updated_incident = self.db.get_incident(incident_id)
+        department = self.db.get_department(department_id)
+        department_name = department['name'] if department else "Department"
+        text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
+
+        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.answer("Department selected")
+
+        handles = self.db.get_department_handles(department_id)
+        if handles:
+            ping = self.message_builder.build_department_ping(handles, incident_id)
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=ping,
+                reply_to_message_id=query.message.message_id
+            )
+
+    async def _handle_change_department(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
+        """Prompt department change options."""
+        incident = self.db.get_incident(incident_id)
+        if not incident or not incident.get('department_id'):
+            await query.answer("Set a department first.", show_alert=True)
+            return
+
+        current_department_id = incident['department_id']
+        if not self.db.is_user_in_department(current_department_id, user.id):
+            await query.answer("Only members of the current department can transfer this issue.", show_alert=True)
+            return
+
+        company_id = membership['group'].get('company_id')
+        departments = self.db.list_company_departments(company_id)
+        if not departments:
+            await query.answer("No departments configured.", show_alert=True)
+            return
+
+        text, keyboard = self.message_builder.build_department_selection(
+            incident,
+            departments,
+            prompt="Select a new department to transfer this issue.",
+            callback_prefix="reassign_department"
+        )
+        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.answer("Choose new department")
+
+    async def _handle_reassign_department(self, query, user, chat, context: ContextTypes.DEFAULT_TYPE,
+                                          incident_id: str, department_id: int):
+        """Handle confirmed department transfer."""
+        incident = self.db.get_incident(incident_id)
+        if not incident or not incident.get('department_id'):
+            await query.answer("Incident not found or not yet assigned.", show_alert=True)
+            return
+
+        current_department_id = incident['department_id']
+        if not self.db.is_user_in_department(current_department_id, user.id):
+            await query.answer("Only members of the current department can transfer this issue.", show_alert=True)
+            return
+
+        success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
+        if not success:
+            await query.answer(message, show_alert=True)
+            return
+
+        updated_incident = self.db.get_incident(incident_id)
+        department = self.db.get_department(department_id)
+        department_name = department['name'] if department else "Department"
+        text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
+
+        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.answer("Department updated")
+
+        handles = self.db.get_department_handles(department_id)
+        if handles:
+            ping = self.message_builder.build_department_ping(handles, incident_id)
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=ping,
+                reply_to_message_id=query.message.message_id
+            )
+
+    async def _handle_claim(self, query, user, chat, incident_id: str):
+        """Handle claim button."""
+        incident = self.db.get_incident(incident_id)
+        if not incident:
+            await query.answer("Incident not found.", show_alert=True)
+            return
+
+        dept_id = incident.get('department_id')
+        if not dept_id:
+            await query.answer("Please choose a department first.", show_alert=True)
+            return
+
+        if not self.db.is_user_in_department(dept_id, user.id):
+            await query.answer("You are not a member of this department.", show_alert=True)
+            return
+
+        success, message = self.db.claim_incident(incident_id, user.id)
+        if not success:
+            await query.answer(message, show_alert=True)
+            return
+
+        incident = self.db.get_incident(incident_id)
+        claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id)
+        department = self.db.get_department(dept_id)
+        dept_name = department['name'] if department else "Department"
+        text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
+
+        try:
+            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.answer("Incident claimed successfully!")
+        except TelegramError as e:
+            logger.error(f"Error editing message for {incident_id}: {e}")
+            await query.answer("Claimed, but couldn't update message. Please refresh.", show_alert=True)
+
+    async def _handle_release(self, query, user, chat, incident_id: str):
+        """Handle leave claim button."""
+        success, message = self.db.release_claim(incident_id, user.id)
 
         if success:
-            # Update the message back to unclaimed state
             incident = self.db.get_incident(incident_id)
             if not incident:
                 await query.answer("Incident not found. Please refresh.", show_alert=True)
                 return
-            claimer_handles = self.db.get_active_claim_handles(incident_id, tier=1) if incident else []
 
-            if incident and incident.get('status') == 'Claimed_T1' and claimer_handles:
-                text, keyboard = self.message_builder.build_claimed_t1_message(incident, claimer_handles)
+            dept_id = incident.get('department_id')
+            department = self.db.get_department(dept_id) if dept_id else None
+            dept_name = department['name'] if department else "Department"
+            claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id) if dept_id else []
+
+            if incident['status'] == 'In_Progress' and claimer_handles:
+                text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
             else:
-                text, keyboard = self.message_builder.build_unclaimed_message(incident)
+                text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
 
             try:
-                logger.info(
-                    f"User {user.id} released T1 claim on {incident_id}, updating message"
-                )
                 await query.edit_message_text(text, reply_markup=keyboard)
                 await query.answer("Claim released")
             except TelegramError as e:
                 logger.error(f"Error editing message for {incident_id}: {e}")
                 await query.answer("Released, but couldn't update message.", show_alert=True)
         else:
-            logger.warning(
-                f"Failed T1 release attempt on {incident_id} by user {user.id}: {message}"
-            )
             await query.answer(message, show_alert=True)
 
-    async def _handle_escalate(self, query, user, chat, incident_id: str,
-                               context: ContextTypes.DEFAULT_TYPE, membership: Dict[str, Any]):
-        """Handle Escalate button."""
-        # Add breadcrumb for escalation
-        SentryConfig.add_breadcrumb(
-            message=f"Escalating incident {incident_id}",
-            category="incident_action",
-            level="warning",
-            data={"incident_id": incident_id, "user_id": user.id}
-        )
-
-        success, message = self.db.escalate_incident(incident_id, user.id)
-
-        if success:
-            # Update the message to escalated state
-            incident = self.db.get_incident(incident_id)
-            if not incident:
-                await query.answer("Incident not found. Please refresh.", show_alert=True)
-                return
-            user_handle = self._get_user_handle(user)
-            tier1_handles = self.db.get_active_claim_handles(incident_id, tier=1)
-            text, keyboard = self.message_builder.build_escalated_message(incident, user_handle, tier1_handles)
-
-            logger.info(
-                f"Incident {incident_id} escalated by user {user.id}; updating message and notifying managers"
-            )
-            await query.edit_message_text(text, reply_markup=keyboard)
-
-            # Send notification to managers
-            manager_handles = self._collect_manager_handles(membership)
-            if manager_handles:
-                notification = self.message_builder.build_escalation_notification(
-                    incident_id,
-                    manager_handles
-                )
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=notification,
-                    reply_to_message_id=query.message.message_id
-                )
-
-            await query.answer("Incident escalated to managers")
-        else:
-            logger.warning(
-                f"Failed escalation attempt on {incident_id} by user {user.id}: {message}"
-            )
-            await query.answer(message, show_alert=True)
-
-    async def _handle_claim_t2(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
-        """Handle Tier 2 (Manager) claim button."""
-        # Check if user is authorized manager
-        manager_ids = self._collect_manager_ids(membership)
-        if user.id not in manager_ids:
-            logger.warning(
-                f"Unauthorized T2 claim attempt on {incident_id} by user {user.id} in chat {chat.id}"
-            )
-            await query.answer(
-                "You are not authorized to claim escalations. Please ask an admin to add you as a manager.",
-                show_alert=True
-            )
-            return
-
-        # Attempt atomic claim
-        success, message = self.db.claim_tier2(incident_id, user.id)
-
-        if success:
-            # Update the message
-            incident = self.db.get_incident(incident_id)
-            if not incident:
-                await query.answer("Incident not found. Please refresh.", show_alert=True)
-                return
-            manager_handles = self.db.get_active_claim_handles(incident_id, tier=2)
-            tier1_handles = self.db.get_active_claim_handles(incident_id, tier=1)
-            text, keyboard = self.message_builder.build_claimed_t2_message(
-                incident,
-                manager_handles,
-                tier1_handles
-            )
-
-            logger.info(
-                f"Incident {incident_id} claimed by manager {user.id}; updating message"
-            )
-            await query.edit_message_text(text, reply_markup=keyboard)
-            await query.answer("Escalation claimed successfully!")
-        else:
-            logger.warning(
-                f"Failed T2 claim attempt on {incident_id} by user {user.id}: {message}"
-            )
-            await query.answer(message, show_alert=True)
-
-    async def _handle_resolve_t1(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
-        """Handle Resolve button for Tier 1."""
-        # Add breadcrumb for resolution
-        SentryConfig.add_breadcrumb(
-            message=f"T1 resolving incident {incident_id}",
-            category="incident_action",
-            level="info",
-            data={"incident_id": incident_id, "user_id": user.id, "tier": 1}
-        )
-
+    async def _handle_resolve(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
+        """Handle resolve button."""
         success, message = self.db.request_resolution(incident_id, user.id)
 
         if success:
-            # Update the message to awaiting summary state
             incident = self.db.get_incident(incident_id)
             user_handle = self._get_user_handle(user)
             text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
 
-            logger.info(
-                f"T1 resolve requested by user {user.id} for {incident_id}; awaiting summary"
-            )
             await query.edit_message_text(text)
 
-            # Send request for resolution summary
             request_message = self.message_builder.build_resolution_request(
                 incident_id,
                 user_handle
-            )
-            logger.debug(
-                f"Prompting user {user.id} for summary on {incident_id} via follow-up message"
-            )
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text=request_message,
-                reply_to_message_id=query.message.message_id
-            )
-
-            # Store the bot's message ID in context for later verification
-            await query.answer("Please reply to the bot's message with your summary")
-        else:
-            logger.warning(
-                f"Failed T1 resolve attempt on {incident_id} by user {user.id}: {message}"
-            )
-            await query.answer(message, show_alert=True)
-
-    async def _handle_resolve_t2(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
-        """Handle Resolve button for Tier 2."""
-        success, message = self.db.request_resolution(incident_id, user.id)
-
-        if success:
-            # Update the message to awaiting summary state
-            incident = self.db.get_incident(incident_id)
-            user_handle = self._get_user_handle(user)
-            text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
-
-            logger.info(
-                f"T2 resolve requested by manager {user.id} for {incident_id}; awaiting summary"
-            )
-            await query.edit_message_text(text)
-
-            # Send request for resolution summary
-            request_message = self.message_builder.build_resolution_request(
-                incident_id,
-                user_handle
-            )
-            logger.debug(
-                f"Prompting manager {user.id} for summary on {incident_id}"
             )
             await context.bot.send_message(
                 chat_id=chat.id,
@@ -1223,9 +1293,6 @@ class BotHandlers:
 
             await query.answer("Please reply to the bot's message with your summary")
         else:
-            logger.warning(
-                f"Failed T2 resolve attempt on {incident_id} by user {user.id}: {message}"
-            )
             await query.answer(message, show_alert=True)
 
     # ==================== Message Handler for Resolution Summary ====================

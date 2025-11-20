@@ -92,11 +92,10 @@ class KPIReportGenerator:
               COUNT(*) AS created,
               SUM(CASE WHEN status IN ('Resolved','Closed') THEN 1 ELSE 0 END) AS closed,
               SUM(CASE WHEN status NOT IN ('Resolved','Closed') THEN 1 ELSE 0 END) AS open,
-              AVG(CASE WHEN t_claimed_tier1 IS NOT NULL
-                       THEN (julianday(t_claimed_tier1) - julianday(t_created)) * 86400 END) AS avg_claim_seconds,
+              AVG(CASE WHEN t_first_claimed IS NOT NULL
+                       THEN (julianday(t_first_claimed) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 END) AS avg_claim_seconds,
               AVG(CASE WHEN t_resolved IS NOT NULL
-                       THEN (julianday(t_resolved) - julianday(t_created)) * 86400 END) AS avg_resolve_seconds,
-              SUM(CASE WHEN t_escalated IS NOT NULL THEN 1 ELSE 0 END) AS escalated
+                       THEN (julianday(t_resolved) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 END) AS avg_resolve_seconds
             FROM incidents
             WHERE company_id = ?
               AND datetime(t_created) >= datetime(?)
@@ -109,17 +108,13 @@ class KPIReportGenerator:
         query = """
             SELECT
               COUNT(*) AS total,
-              SUM(CASE WHEN t_claimed_tier1 IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
-              SUM(CASE WHEN t_claimed_tier1 IS NOT NULL
-                        AND (julianday(t_claimed_tier1) - julianday(t_created)) * 86400 <= ?
+              SUM(CASE WHEN t_first_claimed IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
+              SUM(CASE WHEN t_first_claimed IS NOT NULL
+                        AND (julianday(t_first_claimed) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 <= ?
                    THEN 1 ELSE 0 END) AS claim_met,
-              SUM(CASE WHEN t_escalated IS NOT NULL THEN 1 ELSE 0 END) AS escalated,
-              SUM(CASE WHEN t_claimed_tier2 IS NOT NULL
-                        AND (julianday(t_claimed_tier2) - julianday(t_escalated)) * 86400 <= ?
-                   THEN 1 ELSE 0 END) AS escalation_met,
               SUM(CASE WHEN t_resolved IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
               SUM(CASE WHEN t_resolved IS NOT NULL
-                        AND (julianday(t_resolved) - julianday(t_created)) * 86400 <= ?
+                        AND (julianday(t_resolved) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 <= ?
                    THEN 1 ELSE 0 END) AS resolve_met
             FROM incidents
             WHERE company_id = ?
@@ -128,7 +123,6 @@ class KPIReportGenerator:
         """
         params = (
             self.sla_claim_seconds,
-            self.sla_escalation_seconds,
             self.sla_resolution_seconds,
             company_id,
             window.start_utc.isoformat(),
@@ -137,47 +131,28 @@ class KPIReportGenerator:
         rows = self._execute(query, params)
         return rows[0] if rows else {}
 
-    def _fetch_escalation_details(self, company_id: int, window: ReportWindow) -> Dict[str, Any]:
-        query = """
-            SELECT
-              COUNT(*) AS escalations,
-              SUM(CASE WHEN t_claimed_tier2 IS NOT NULL THEN 1 ELSE 0 END) AS claimed_t2,
-              SUM(CASE WHEN t_resolved IS NOT NULL THEN 1 ELSE 0 END) AS resolved_after_escalation,
-              AVG(CASE WHEN t_escalated IS NOT NULL AND t_claimed_tier2 IS NOT NULL
-                       THEN (julianday(t_claimed_tier2) - julianday(t_escalated)) * 86400 END) AS avg_seconds_to_t2_claim,
-              AVG(CASE WHEN t_escalated IS NOT NULL AND t_resolved IS NOT NULL
-                       THEN (julianday(t_resolved) - julianday(t_escalated)) * 86400 END) AS avg_seconds_escalation_to_resolve,
-              AVG(CASE WHEN t_escalated IS NOT NULL AND t_created IS NOT NULL
-                       THEN (julianday(t_escalated) - julianday(t_created)) * 86400 END) AS avg_seconds_to_escalate
-            FROM incidents
-            WHERE company_id = ?
-              AND t_escalated IS NOT NULL
-              AND datetime(t_created) >= datetime(?)
-              AND datetime(t_created) < datetime(?)
-        """
-        rows = self._execute(query, (company_id, window.start_utc.isoformat(), window.end_utc.isoformat()))
-        return rows[0] if rows else {}
-
     def _fetch_leaderboard(self, company_id: int, window: ReportWindow) -> List[Dict[str, Any]]:
         query = """
             SELECT
-              p.tier,
               p.user_id,
+              p.department_id,
+              COALESCE(d.name, 'Unassigned') AS department_name,
               COALESCE(u.telegram_handle, 'User_' || p.user_id) AS handle,
               COUNT(*) AS incidents_touched,
               SUM(CASE WHEN p.status = 'resolved_self' THEN 1 ELSE 0 END) AS resolved_self,
               SUM(CASE WHEN p.status = 'resolved_other' THEN 1 ELSE 0 END) AS resolved_other,
-              SUM(CASE WHEN p.status = 'escalated' THEN 1 ELSE 0 END) AS escalated_out,
+              SUM(CASE WHEN p.status = 'transferred' THEN 1 ELSE 0 END) AS transferred_out,
               SUM(p.total_active_seconds) AS total_active_seconds,
               AVG(NULLIF(p.total_active_seconds,0)) AS avg_active_seconds
             FROM incident_participants p
             JOIN incidents i ON i.incident_id = p.incident_id
             LEFT JOIN users u ON u.user_id = p.user_id
+            LEFT JOIN departments d ON d.department_id = p.department_id
             WHERE i.company_id = ?
               AND datetime(i.t_created) >= datetime(?)
               AND datetime(i.t_created) < datetime(?)
-            GROUP BY p.tier, p.user_id
-            ORDER BY p.tier ASC, resolved_self DESC, total_active_seconds DESC
+            GROUP BY p.department_id, p.user_id
+            ORDER BY resolved_self DESC, total_active_seconds DESC
             LIMIT 50
         """
         return self._execute(query, (company_id, window.start_utc.isoformat(), window.end_utc.isoformat()))
@@ -193,8 +168,7 @@ class KPIReportGenerator:
             SELECT
               strftime('%Y-%m-%d', t_created) AS bucket,
               COUNT(*) AS created,
-              SUM(CASE WHEN status IN ('Resolved','Closed') THEN 1 ELSE 0 END) AS closed,
-              SUM(CASE WHEN t_escalated IS NOT NULL THEN 1 ELSE 0 END) AS escalated
+              SUM(CASE WHEN status IN ('Resolved','Closed') THEN 1 ELSE 0 END) AS closed
             FROM win
             GROUP BY bucket
             ORDER BY bucket ASC
@@ -227,13 +201,12 @@ class KPIReportGenerator:
               description,
               created_by_handle,
               t_created,
-              t_claimed_tier1,
-              t_escalated,
-              t_claimed_tier2,
+              t_department_assigned,
+              t_first_claimed,
               t_resolved,
-              (julianday(t_claimed_tier1) - julianday(t_created)) * 86400 AS seconds_to_claim,
-              (julianday(t_escalated) - julianday(t_created)) * 86400 AS seconds_to_escalate,
-              (julianday(t_resolved) - julianday(t_created)) * 86400 AS seconds_to_resolve
+              department_id,
+              (julianday(t_first_claimed) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 AS seconds_to_claim,
+              (julianday(t_resolved) - julianday(COALESCE(t_department_assigned, t_created))) * 86400 AS seconds_to_resolve
             FROM incidents
             WHERE company_id = ?
               AND datetime(t_created) >= datetime(?)
@@ -273,7 +246,8 @@ class KPIReportGenerator:
         created = summary.get("created") or 0
         closed = summary.get("closed") or 0
         open_count = summary.get("open") or 0
-        escalated = summary.get("escalated") or 0
+        claimed = sla.get("claimed") or 0
+        total = sla.get("total") or 0
 
         return [
             {
@@ -292,9 +266,9 @@ class KPIReportGenerator:
                 "subtext": f"SLA met {self._pct(sla.get('resolve_met'), sla.get('resolved'))}% ({int(sla.get('resolve_met') or 0)}/{int(sla.get('resolved') or 0)})"
             },
             {
-                "label": "Escalation Rate",
-                "value": f"{self._pct(escalated, created)}%",
-                "subtext": f"Escalated {int(escalated)} of {int(created)}"
+                "label": "Claim Rate",
+                "value": f"{self._pct(claimed, total)}%",
+                "subtext": f"Claimed {int(claimed)} of {int(total)} incidents"
             },
         ]
 
@@ -303,7 +277,6 @@ class KPIReportGenerator:
         window = self.compute_window(period)
         summary = self._fetch_summary(company["company_id"], window)
         sla = self._fetch_sla(company["company_id"], window)
-        escalations = self._fetch_escalation_details(company["company_id"], window)
         leaderboard = self._fetch_leaderboard(company["company_id"], window)
         trends = self._fetch_trends(company["company_id"], window)
         backlog = self._fetch_backlog(company["company_id"])
@@ -315,7 +288,7 @@ class KPIReportGenerator:
             f"Created {int(summary.get('created') or 0)} incidents; closed {int(summary.get('closed') or 0)}, open {int(summary.get('open') or 0)}",
             f"Avg time to first claim: {self._fmt_duration_short(summary.get('avg_claim_seconds'))}",
             f"Avg time to resolve: {self._fmt_duration_short(summary.get('avg_resolve_seconds'))}",
-            f"Escalations: {int(escalations.get('escalations') or 0)} (claimed {int(escalations.get('claimed_t2') or 0)})"
+            f"Claims: {int(sla.get('claimed') or 0)} of {int(sla.get('total') or 0)} incidents"
         ]
 
         report_data = {
@@ -331,7 +304,6 @@ class KPIReportGenerator:
             },
             "summary": summary,
             "sla": sla,
-            "escalations": escalations,
             "leaderboard": leaderboard,
             "trends": trends,
             "backlog": backlog,
