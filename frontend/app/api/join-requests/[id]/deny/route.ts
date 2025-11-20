@@ -3,9 +3,9 @@ import { getDatabase } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 
 interface RouteParams {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 /**
@@ -20,7 +20,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth();
     const db = getDatabase();
-    const groupId = parseInt(params.id);
+    const { id } = await params;
+    const groupId = parseInt(id);
 
     if (isNaN(groupId)) {
       return NextResponse.json({ error: 'Invalid group ID' }, { status: 400 });
@@ -62,16 +63,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    //DON'T ENFORCE THIS
     // Verify the requested company name matches (case-insensitive)
-    if (
-      !group.requested_company_name ||
-      group.requested_company_name.trim().toLowerCase() !== company.name.trim().toLowerCase()
-    ) {
-      return NextResponse.json(
-        { error: 'Group requested a different company' },
-        { status: 403 }
-      );
-    }
+    // if (
+    //   !group.requested_company_name ||
+    //   group.requested_company_name.trim().toLowerCase() !== company.name.trim().toLowerCase()
+    // ) {
+    //   return NextResponse.json(
+    //     { error: 'Group requested a different company' },
+    //     { status: 403 }
+    //   );
+    // }
 
     // Delete the pending request
     // Note: We delete instead of marking as denied to keep the database clean

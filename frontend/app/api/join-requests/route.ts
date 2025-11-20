@@ -36,9 +36,8 @@ export async function GET(request: NextRequest) {
       FROM groups
       WHERE status = 'pending'
         AND requested_company_name IS NOT NULL
-        AND LOWER(TRIM(requested_company_name)) = LOWER(TRIM(?))
       ORDER BY group_id DESC
-    `).all(company.name) as any[];
+    `).all() as any[];
 
     const formattedRequests = pendingRequests.map(request => ({
       group_id: request.group_id,
