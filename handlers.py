@@ -13,6 +13,7 @@ from database import Database
 from message_builder import MessageBuilder
 from config import Config
 from reporting import KPIReportGenerator, html_to_bytes
+from sentry_config import SentryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,21 @@ class BotHandlers:
             language_code = user.language_code if hasattr(user, 'language_code') and user.language_code else None
             is_bot = user.is_bot if hasattr(user, 'is_bot') else False
 
+            # Set Sentry user context for error tracking
+            SentryConfig.set_user_context(
+                user_id=user_id,
+                username=username,
+                role=team_role,
+                first_name=first_name,
+                last_name=last_name,
+                language_code=language_code,
+                is_bot=is_bot
+            )
+
+            # Set group context if available
+            if group_id:
+                SentryConfig.set_tag("group_id", group_id)
+
             # Track user with all available data
             return self.db.track_user(
                 user_id=user_id,
@@ -88,6 +104,7 @@ class BotHandlers:
             )
         except Exception as e:
             logger.error(f"Error tracking user interaction: {e}", exc_info=True)
+            SentryConfig.capture_exception(e, operation="track_user_interaction")
             return None
 
     def _role_rank(self, role: Optional[str]) -> int:
@@ -832,6 +849,18 @@ class BotHandlers:
 
         user_handle = self._get_user_handle(user)
 
+        # Add breadcrumb for incident creation
+        SentryConfig.add_breadcrumb(
+            message=f"User {user.id} creating new incident",
+            category="incident",
+            level="info",
+            data={
+                "group_id": chat.id,
+                "company_id": group_info.get('company_id'),
+                "description_length": len(description)
+            }
+        )
+
         # Create incident in database (without message_id first)
         incident_id = self.db.create_incident(
             group_id=chat.id,
@@ -840,6 +869,15 @@ class BotHandlers:
             description=description,
             company_id=group_info.get('company_id')
         )
+
+        # Set incident context for Sentry
+        SentryConfig.set_tag("incident_id", incident_id)
+        SentryConfig.set_context("incident", {
+            "incident_id": incident_id,
+            "group_id": chat.id,
+            "company_id": group_info.get('company_id'),
+            "created_by": user_handle
+        })
 
         # Get the incident to build the message
         incident = self.db.get_incident(incident_id)
@@ -891,6 +929,18 @@ class BotHandlers:
 
         logger.info(f"Callback: {callback_data} from user {user.id} in chat {chat.id}")
 
+        # Add breadcrumb for callback action
+        SentryConfig.add_breadcrumb(
+            message=f"User callback: {callback_data}",
+            category="user_action",
+            level="info",
+            data={
+                "user_id": user.id if user else None,
+                "chat_id": chat.id if chat else None,
+                "callback_data": callback_data
+            }
+        )
+
         try:
             membership = await self._require_active_group(update, context, chat)
             if not membership:
@@ -917,13 +967,28 @@ class BotHandlers:
 
         except ValueError:
             logger.error(f"Invalid callback data format: {callback_data}")
+            SentryConfig.capture_message(
+                f"Invalid callback data: {callback_data}",
+                level="warning",
+                callback_data=callback_data
+            )
             await query.answer("Invalid button data", show_alert=True)
         except Exception as e:
             logger.error(f"Error handling callback: {e}", exc_info=True)
+            SentryConfig.capture_exception(e, callback_data=callback_data)
             await query.answer("An error occurred. Please try again.", show_alert=True)
 
     async def _handle_claim_t1(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Handle Tier 1 claim button."""
+        # Set incident context
+        SentryConfig.set_tag("incident_id", incident_id)
+        SentryConfig.add_breadcrumb(
+            message=f"T1 claim attempt on {incident_id}",
+            category="incident_action",
+            level="info",
+            data={"incident_id": incident_id, "user_id": user.id}
+        )
+
         # Check if user is authorized dispatcher
         dispatcher_ids = self._collect_dispatcher_ids(membership)
         if user.id not in dispatcher_ids:
@@ -995,6 +1060,14 @@ class BotHandlers:
     async def _handle_escalate(self, query, user, chat, incident_id: str,
                                context: ContextTypes.DEFAULT_TYPE, membership: Dict[str, Any]):
         """Handle Escalate button."""
+        # Add breadcrumb for escalation
+        SentryConfig.add_breadcrumb(
+            message=f"Escalating incident {incident_id}",
+            category="incident_action",
+            level="warning",
+            data={"incident_id": incident_id, "user_id": user.id}
+        )
+
         success, message = self.db.escalate_incident(incident_id, user.id)
 
         if success:
@@ -1076,6 +1149,14 @@ class BotHandlers:
 
     async def _handle_resolve_t1(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
         """Handle Resolve button for Tier 1."""
+        # Add breadcrumb for resolution
+        SentryConfig.add_breadcrumb(
+            message=f"T1 resolving incident {incident_id}",
+            category="incident_action",
+            level="info",
+            data={"incident_id": incident_id, "user_id": user.id, "tier": 1}
+        )
+
         success, message = self.db.request_resolution(incident_id, user.id)
 
         if success:

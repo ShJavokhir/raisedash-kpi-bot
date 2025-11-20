@@ -15,6 +15,7 @@ from telegram.ext import (
 )
 
 from config import Config
+from sentry_config import SentryConfig
 from database import Database
 from handlers import BotHandlers
 from reminders import ReminderService
@@ -35,6 +36,22 @@ class IncidentBot:
         """Initialize the bot application."""
         # Validate configuration
         Config.validate()
+
+        # Initialize Sentry for error tracking and performance monitoring
+        SentryConfig.initialize(
+            dsn=Config.SENTRY_DSN,
+            environment=Config.SENTRY_ENVIRONMENT,
+            traces_sample_rate=Config.SENTRY_TRACES_SAMPLE_RATE,
+            profiles_sample_rate=Config.SENTRY_PROFILES_SAMPLE_RATE,
+            enable_profiling=True
+        )
+
+        # Set application context in Sentry
+        SentryConfig.set_context("application", {
+            "name": "raisedash-kpi-bot",
+            "database_path": Config.DATABASE_PATH,
+            "environment": Config.SENTRY_ENVIRONMENT,
+        })
 
         # Initialize database
         self.db = Database(Config.DATABASE_PATH)
@@ -109,6 +126,7 @@ class IncidentBot:
 
             except Exception as e:
                 logger.error(f"Error in reminder task: {e}", exc_info=True)
+                SentryConfig.capture_exception(e, task="reminder_check")
 
             # Wait for next interval
             await asyncio.sleep(interval)
@@ -148,8 +166,10 @@ def main():
         bot.run()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
+        SentryConfig.capture_message("Bot stopped by user", level="info")
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        SentryConfig.capture_exception(e, fatal=True)
         raise
 
 

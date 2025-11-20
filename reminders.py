@@ -11,6 +11,7 @@ from database import Database
 from message_builder import MessageBuilder
 from config import Config
 from time_utils import minutes_since
+from sentry_config import SentryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class ReminderService:
             await self._check_summary_timeouts()
         except Exception as e:
             logger.error(f"Error in reminder check: {e}", exc_info=True)
+            SentryConfig.capture_exception(e, task="reminder_service")
 
     async def _check_unclaimed_reminders(self):
         """Check for unclaimed incidents that need reminders."""
@@ -81,8 +83,10 @@ class ReminderService:
 
             except TelegramError as e:
                 logger.error(f"Error sending unclaimed reminder for {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="unclaimed")
             except Exception as e:
                 logger.error(f"Unexpected error processing unclaimed incident {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="unclaimed")
 
     async def _check_escalation_reminders(self):
         """Check for unclaimed escalations that need reminders."""
@@ -145,8 +149,10 @@ class ReminderService:
 
             except TelegramError as e:
                 logger.error(f"Error sending escalation reminder for {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="escalation")
             except Exception as e:
                 logger.error(f"Unexpected error processing escalated incident {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="escalation")
 
     async def _check_summary_timeouts(self):
         """Auto-close incidents that have waited too long for a summary."""
@@ -237,8 +243,10 @@ class ReminderService:
 
             except TelegramError as e:
                 logger.error(f"Telegram error during auto-close for {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="auto_close")
             except Exception as e:
                 logger.error(f"Unexpected error during auto-close for {incident_id}: {e}")
+                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="auto_close")
 
     def clear_reminder_for_incident(self, incident_id: str):
         """Clear reminder flags when an incident is claimed/resolved."""

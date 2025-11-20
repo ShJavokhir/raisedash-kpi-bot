@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from threading import Lock
 
 from time_utils import parse_timestamp, utc_iso_now, utc_now
+from sentry_config import SentryConfig, sentry_trace
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class Database:
         except Exception as e:
             conn.rollback()
             logger.error(f"Database error: {e}")
+            SentryConfig.capture_exception(e, db_operation="connection", db_path=self.db_path)
             raise
         finally:
             conn.close()
@@ -1014,6 +1016,7 @@ class Database:
         new_num = last_num + 1
         return f"{new_num:04d}"
 
+    @sentry_trace(op="db.create", description="Create incident")
     def create_incident(self, group_id: int, created_by_id: int,
                        created_by_handle: str, description: str,
                        pinned_message_id: int = None,
@@ -1057,6 +1060,7 @@ class Database:
                     WHERE incident_id = ?
                 """, (message_id, incident_id))
 
+    @sentry_trace(op="db.query", description="Get incident")
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         """Get incident details by incident_id."""
         with self.get_connection() as conn:
@@ -1328,6 +1332,7 @@ class Database:
             """, (incident_id,))
             return [dict(row) for row in cursor.fetchall()]
 
+    @sentry_trace(op="db.update", description="Claim tier 1")
     def claim_tier1(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
         Add a Tier 1 claim for an incident. Multiple dispatchers can co-claim.
@@ -1441,6 +1446,7 @@ class Database:
                 logger.info(f"Incident {incident_id} released by dispatcher {user_id}")
                 return True, "Claim released successfully"
 
+    @sentry_trace(op="db.update", description="Escalate incident")
     def escalate_incident(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
         Escalate an incident from Tier 1 to Tier 2.
@@ -1483,6 +1489,7 @@ class Database:
                 else:
                     return False, "You cannot escalate this incident."
 
+    @sentry_trace(op="db.update", description="Claim tier 2")
     def claim_tier2(self, incident_id: str, user_id: int) -> Tuple[bool, str]:
         """
         Add a Tier 2 claim for an escalated incident.
@@ -1587,6 +1594,7 @@ class Database:
 
                 return False, "You cannot resolve this incident."
 
+    @sentry_trace(op="db.update", description="Resolve incident")
     def resolve_incident(self, incident_id: str, user_id: int,
                         resolution_summary: str) -> Tuple[bool, str]:
         """
