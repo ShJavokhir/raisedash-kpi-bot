@@ -274,13 +274,19 @@ class KPIReportGenerator:
 
     def build_report(self, company: Dict[str, Any], period: str) -> Tuple[Dict[str, Any], str]:
         """Aggregate data and render final HTML."""
+        logger.info(f"Building KPI report for company {company['company_id']} ({company['name']}), period: {period}")
+
         window = self.compute_window(period)
+        logger.debug(f"Report window: {window.start_utc} to {window.end_utc}")
+
+        logger.debug("Fetching report data...")
         summary = self._fetch_summary(company["company_id"], window)
         sla = self._fetch_sla(company["company_id"], window)
         leaderboard = self._fetch_leaderboard(company["company_id"], window)
         trends = self._fetch_trends(company["company_id"], window)
         backlog = self._fetch_backlog(company["company_id"])
         incidents = self._fetch_incident_details(company["company_id"], window)
+        logger.debug(f"Fetched data: {len(incidents)} incidents, {len(leaderboard)} users in leaderboard")
 
         cards = self._build_cards(summary, sla)
 
@@ -312,7 +318,9 @@ class KPIReportGenerator:
             "highlights": highlights,
         }
 
+        logger.debug("Rendering HTML report...")
         html = self.render_html(report_data)
+        logger.info(f"Report generated successfully: {len(html)} bytes, {len(incidents)} incidents")
         return report_data, html
 
     def render_html(self, report_data: Dict[str, Any]) -> str:

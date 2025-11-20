@@ -31,9 +31,11 @@ class ReminderService:
 
     async def check_and_send_reminders(self):
         """Check for incidents that need reminders and send them."""
+        logger.debug("Starting reminder check cycle")
         try:
-            await self._check_unclaimed_reminders()
-            await self._check_summary_timeouts()
+            unclaimed_count = await self._check_unclaimed_reminders()
+            timeout_count = await self._check_summary_timeouts()
+            logger.debug(f"Reminder check complete: {unclaimed_count} unclaimed reminders, {timeout_count} summary timeouts")
         except Exception as e:
             logger.error(f"Error in reminder check: {e}", exc_info=True)
             SentryConfig.capture_exception(e, task="reminder_service")
@@ -44,6 +46,10 @@ class ReminderService:
             Config.SLA_UNCLAIMED_NUDGE_MINUTES
         )
 
+        if unclaimed_incidents:
+            logger.info(f"Found {len(unclaimed_incidents)} unclaimed incidents requiring reminders")
+
+        reminder_count = 0
         for incident in unclaimed_incidents:
             incident_id = incident['incident_id']
 
@@ -89,7 +95,8 @@ class ReminderService:
 
                 # Mark as reminded
                 self._unclaimed_reminded[incident_id] = last_assigned
-                logger.info(f"Sent unclaimed reminder for {incident_id}")
+                reminder_count += 1
+                logger.info(f"Sent unclaimed reminder for {incident_id} (total sent: {reminder_count})")
 
             except TelegramError as e:
                 logger.error(f"Error sending unclaimed reminder for {incident_id}: {e}")
@@ -98,12 +105,18 @@ class ReminderService:
                 logger.error(f"Unexpected error processing unclaimed incident {incident_id}: {e}")
                 SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="unclaimed")
 
+        return reminder_count
+
     async def _check_summary_timeouts(self):
         """Auto-close incidents that have waited too long for a summary."""
         awaiting_summaries = self.db.get_awaiting_summary_incidents(
             Config.SLA_SUMMARY_TIMEOUT_MINUTES
         )
 
+        if awaiting_summaries:
+            logger.info(f"Found {len(awaiting_summaries)} incidents awaiting summary timeout")
+
+        timeout_count = 0
         for incident in awaiting_summaries:
             incident_id = incident['incident_id']
 
@@ -183,7 +196,8 @@ class ReminderService:
                 # Clear any reminder tracking now that the incident is closed
                 self.clear_reminder_for_incident(incident_id)
 
-                logger.info(f"Auto-closed incident {incident_id} after summary timeout")
+                timeout_count += 1
+                logger.info(f"Auto-closed incident {incident_id} after summary timeout (total closed: {timeout_count})")
 
             except TelegramError as e:
                 logger.error(f"Telegram error during auto-close for {incident_id}: {e}")
@@ -191,6 +205,8 @@ class ReminderService:
             except Exception as e:
                 logger.error(f"Unexpected error during auto-close for {incident_id}: {e}")
                 SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="auto_close")
+
+        return timeout_count
 
     def clear_reminder_for_incident(self, incident_id: str):
         """Clear reminder flags when an incident is claimed/resolved."""
