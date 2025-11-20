@@ -95,52 +95,60 @@ export default function DashboardLayout({
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      <div className="min-h-screen flex items-center justify-center bg-noise">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+          <span className="text-xs uppercase tracking-wider text-neutral-500">Initializing...</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-noise">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-gray-600 bg-opacity-75 z-20 lg:hidden"
+          className="fixed inset-0 bg-neutral-900 bg-opacity-50 z-20 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-30 w-64 bg-white tech-border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="h-full flex flex-col">
           {/* Logo */}
-          <div className="h-16 flex items-center justify-between px-6 border-b border-gray-200">
-            <h1 className="text-xl font-bold text-gray-900">KPI Dashboard</h1>
+          <div className="h-16 flex items-center justify-between px-6 border-b-2 border-neutral-800">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-neutral-900"></div>
+              <h1 className="text-sm font-bold tracking-widest uppercase text-ink">
+                Raisedash <span className="font-light text-neutral-500">KPI</span>
+              </h1>
+            </div>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="lg:hidden text-gray-500 hover:text-gray-700"
+              className="lg:hidden text-neutral-500 hover:text-neutral-900 transition-colors"
             >
-              <X className="h-6 w-6" />
+              <X className="h-4 w-4" strokeWidth={1} />
             </button>
           </div>
 
           {/* Company info */}
-          <div className="px-6 py-4 bg-indigo-50 border-b border-gray-200">
-            <p className="text-xs font-medium text-indigo-600 uppercase tracking-wider">
+          <div className="px-6 py-4 tech-border-b bg-neutral-50">
+            <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">
               Company
             </p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+            <p className="text-xs font-medium text-neutral-900 uppercase tracking-wide">
               {session?.companyName}
             </p>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto custom-scrollbar">
             {navigation.map((item) => {
               const isActive = pathname === item.href;
               return (
@@ -148,13 +156,13 @@ export default function DashboardLayout({
                   key={item.name}
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                  className={`flex items-center px-3 py-2.5 text-xs font-medium uppercase tracking-wider transition-colors ${
                     isActive
-                      ? 'bg-indigo-50 text-indigo-600'
-                      : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
                   }`}
                 >
-                  <item.icon className={`mr-3 h-5 w-5 ${isActive ? 'text-indigo-600' : 'text-gray-400'}`} />
+                  <item.icon className={`mr-3 h-4 w-4 ${isActive ? 'text-white' : 'text-neutral-400'}`} strokeWidth={1} />
                   {item.name}
                 </Link>
               );
@@ -162,12 +170,12 @@ export default function DashboardLayout({
           </nav>
 
           {/* Logout button */}
-          <div className="p-4 border-t border-gray-200">
+          <div className="p-4 tech-border-t">
             <button
               onClick={handleLogout}
-              className="flex items-center w-full px-4 py-3 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-50 hover:text-gray-900 transition-colors"
+              className="flex items-center w-full px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
             >
-              <LogOut className="mr-3 h-5 w-5 text-gray-400" />
+              <LogOut className="mr-3 h-4 w-4 text-neutral-400" strokeWidth={1} />
               Logout
             </button>
           </div>
@@ -177,14 +185,23 @@ export default function DashboardLayout({
       {/* Main content */}
       <div className="lg:pl-64">
         {/* Top bar */}
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center px-4 lg:px-8">
+        <header className="h-16 bg-white tech-border-b flex items-center px-4 lg:px-8">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden text-gray-500 hover:text-gray-700 mr-4"
+            className="lg:hidden text-neutral-500 hover:text-neutral-900 mr-4 transition-colors"
           >
-            <Menu className="h-6 w-6" />
+            <Menu className="h-5 w-5" strokeWidth={1} />
           </button>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 bg-neutral-900"></div>
+            <span className="text-[10px] uppercase tracking-widest text-neutral-500 font-bold">
+              System Dashboard
+            </span>
+          </div>
           <div className="flex-1" />
+          <div className="text-[10px] uppercase tracking-wider text-neutral-400">
+            {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+          </div>
         </header>
 
         {/* Page content */}

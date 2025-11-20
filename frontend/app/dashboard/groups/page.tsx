@@ -36,65 +36,68 @@ export default function GroupsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Telegram Groups</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          View all Telegram groups connected to your company
+      {/* Header */}
+      <div className="border-b-2 border-neutral-800 pb-4">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-2 h-2 bg-neutral-900"></div>
+          <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+            Telegram <span className="font-light text-neutral-500">Groups</span>
+          </h1>
+        </div>
+        <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
+          Connected messaging channels and group configurations
         </p>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+            <span className="text-xs uppercase tracking-wider text-neutral-500">Loading Groups...</span>
+          </div>
         </div>
       ) : groups.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-12 text-center">
-          <MessageSquare className="mx-auto h-12 w-12 text-gray-400" />
-          <p className="mt-4 text-gray-500">No groups found</p>
+        <div className="tech-border bg-white p-12 text-center">
+          <MessageSquare className="mx-auto h-8 w-8 text-neutral-400 mb-4" strokeWidth={1} />
+          <p className="text-xs uppercase tracking-wider text-neutral-500">No groups found</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {groups.map((group) => (
             <div
               key={group.group_id}
-              className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow"
+              className="tech-border bg-white p-4 tech-card"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0 h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <MessageSquare className="h-6 w-6 text-blue-600" />
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 h-8 w-8 tech-border bg-white flex items-center justify-center">
+                    <MessageSquare className="h-4 w-4 text-neutral-500" strokeWidth={1} />
                   </div>
-                  <div className="ml-4">
-                    <h3 className="text-lg font-semibold text-gray-900">{group.group_name}</h3>
-                    <p className="text-sm text-gray-500">ID: {group.group_id}</p>
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{group.group_name}</h3>
+                    <p className="text-[10px] text-neutral-500 font-mono">ID: {group.group_id}</p>
                   </div>
                 </div>
                 {group.status === 'active' ? (
-                  <CheckCircle className="h-5 w-5 text-green-600" />
+                  <CheckCircle className="h-4 w-4 text-neutral-900" strokeWidth={1} />
                 ) : (
-                  <Clock className="h-5 w-5 text-yellow-600" />
+                  <Clock className="h-4 w-4 text-neutral-500" strokeWidth={1} />
                 )}
               </div>
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Status</span>
-                  <span
-                    className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      group.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}
-                  >
+              <div className="space-y-2 pt-3 tech-border-t">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-neutral-500">Status</span>
+                  <span className={`badge ${group.status === 'active' ? 'badge-open' : 'badge-closed'}`}>
                     {group.status}
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Managers</span>
-                  <span className="text-gray-900">{group.manager_handles.length}</span>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[10px] uppercase tracking-wider text-neutral-500">Managers</span>
+                  <span className="text-xs text-neutral-900 font-mono">{group.manager_handles.length}</span>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Dispatchers</span>
-                  <span className="text-gray-900">{group.dispatcher_user_ids.length}</span>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[10px] uppercase tracking-wider text-neutral-500">Dispatchers</span>
+                  <span className="text-xs text-neutral-900 font-mono">{group.dispatcher_user_ids.length}</span>
                 </div>
               </div>
             </div>
