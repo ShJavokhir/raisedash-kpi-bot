@@ -309,6 +309,25 @@ class Database:
             ON incident_department_sessions(incident_id)
         """)
 
+        # Pending notifications table (for API -> Bot communication)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pending_notifications (
+                notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                message_type TEXT NOT NULL,
+                message_data TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'failed')),
+                created_at TEXT NOT NULL,
+                sent_at TEXT,
+                error_message TEXT,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notifications_status
+            ON pending_notifications(status, created_at)
+        """)
+
     def _apply_migrations(self, cursor):
         """Apply lightweight migrations for existing deployments."""
         def get_columns(table_name: str) -> set:
@@ -2358,3 +2377,101 @@ class Database:
             """, (threshold_time,))
 
             return [dict(row) for row in cursor.fetchall()]
+
+    # ==================== Notification Queue Functions ====================
+
+    def create_notification(self, group_id: int, message_type: str, message_data: dict) -> int:
+        """
+        Create a pending notification to be sent by the bot.
+        Used by the Next.js API to queue messages for Telegram.
+
+        Args:
+            group_id: The Telegram group ID to send the message to
+            message_type: Type of message (e.g., 'group_approved', 'group_denied')
+            message_data: Dictionary with message-specific data
+
+        Returns:
+            The notification_id of the created notification
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO pending_notifications (group_id, message_type, message_data, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (group_id, message_type, json.dumps(message_data), utc_iso_now()))
+            notification_id = cursor.lastrowid
+            logger.info(f"Created notification {notification_id} for group {group_id}: {message_type}")
+            return notification_id
+
+    def get_pending_notifications(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get all pending notifications that need to be sent.
+
+        Args:
+            limit: Maximum number of notifications to return
+
+        Returns:
+            List of pending notification dictionaries
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    notification_id,
+                    group_id,
+                    message_type,
+                    message_data,
+                    created_at
+                FROM pending_notifications
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+            """, (limit,))
+
+            notifications = []
+            for row in cursor.fetchall():
+                notification = dict(row)
+                # Parse JSON message_data
+                try:
+                    notification['message_data'] = json.loads(notification['message_data'])
+                except (json.JSONDecodeError, TypeError):
+                    notification['message_data'] = {}
+                notifications.append(notification)
+
+            return notifications
+
+    def mark_notification_sent(self, notification_id: int):
+        """Mark a notification as successfully sent."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE pending_notifications
+                SET status = 'sent', sent_at = ?
+                WHERE notification_id = ?
+            """, (utc_iso_now(), notification_id))
+            logger.debug(f"Marked notification {notification_id} as sent")
+
+    def mark_notification_failed(self, notification_id: int, error_message: str):
+        """Mark a notification as failed with an error message."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE pending_notifications
+                SET status = 'failed', sent_at = ?, error_message = ?
+                WHERE notification_id = ?
+            """, (utc_iso_now(), error_message, notification_id))
+            logger.warning(f"Marked notification {notification_id} as failed: {error_message}")
+
+    def cleanup_old_notifications(self, days: int = 7):
+        """Delete old sent/failed notifications older than the specified days."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff_time = (utc_now() - timedelta(days=days)).isoformat()
+            cursor.execute("""
+                DELETE FROM pending_notifications
+                WHERE status IN ('sent', 'failed')
+                  AND datetime(created_at) <= datetime(?)
+            """, (cutoff_time,))
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old notifications")

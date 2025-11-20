@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Users, AlertCircle } from 'lucide-react';
+import { Check, X, Users, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface JoinRequest {
   group_id: number;
@@ -111,8 +111,8 @@ export default function JoinRequestsPage() {
     return (
       <div className="flex items-center justify-center min-h-96">
         <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-          <p className="text-gray-600">Loading join requests...</p>
+          <div className="inline-block animate-pulse-subtle h-12 w-12 tech-border rounded mb-4"></div>
+          <p className="text-sm uppercase tracking-wider text-ink/60">LOADING JOIN REQUESTS</p>
         </div>
       </div>
     );
@@ -121,15 +121,15 @@ export default function JoinRequestsPage() {
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-96">
-        <div className="text-center text-red-600">
-          <AlertCircle className="w-12 h-12 mx-auto mb-4" />
-          <p className="text-lg font-semibold">Error loading join requests</p>
-          <p className="text-sm mt-2">{error}</p>
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-ink" />
+          <p className="text-sm uppercase tracking-wider font-medium mb-2">ERROR LOADING REQUESTS</p>
+          <p className="text-xs text-ink/60 mb-4">{error}</p>
           <button
             onClick={fetchJoinRequests}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="tech-button"
           >
-            Retry
+            RETRY
           </button>
         </div>
       </div>
@@ -137,132 +137,136 @@ export default function JoinRequestsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="section-header">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Group Join Requests</h1>
-          <p className="text-gray-600 mt-2">
-            Manage pending requests from Telegram groups wanting to join {companyName}
+          <span className="section-tag">GROUP JOIN REQUESTS</span>
+          <p className="text-xs text-ink/60 mt-2 uppercase tracking-wide">
+            MANAGE PENDING REQUESTS FOR {companyName.toUpperCase()}
           </p>
         </div>
         <button
           onClick={fetchJoinRequests}
-          className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          className="tech-button flex items-center gap-2"
+          disabled={loading}
         >
-          Refresh
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          REFRESH
         </button>
       </div>
 
       {/* Stats */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div className="tech-card p-4 tech-border">
         <div className="flex items-center gap-3">
-          <Users className="w-6 h-6 text-blue-600" />
+          <Users className="w-5 h-5 text-ink" />
           <div>
-            <p className="text-sm text-blue-800 font-medium">Pending Requests</p>
-            <p className="text-2xl font-bold text-blue-900">{joinRequests.length}</p>
+            <p className="text-xs text-ink/60 uppercase tracking-wider">PENDING REQUESTS</p>
+            <p className="text-2xl font-bold text-ink font-mono">{joinRequests.length}</p>
           </div>
         </div>
       </div>
 
       {/* Join Requests List */}
       {joinRequests.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">No Pending Requests</h3>
-          <p className="text-gray-500">
-            There are currently no groups requesting to join {companyName}.
+        <div className="tech-card p-12 text-center tech-border">
+          <Users className="w-16 h-16 text-ink/30 mx-auto mb-4" />
+          <p className="text-sm uppercase tracking-wider font-medium mb-2">NO PENDING REQUESTS</p>
+          <p className="text-xs text-ink/60">
+            THERE ARE CURRENTLY NO GROUPS REQUESTING TO JOIN {companyName.toUpperCase()}.
             <br />
-            When a Telegram group requests access, they will appear here for approval.
+            WHEN A TELEGRAM GROUP REQUESTS ACCESS, THEY WILL APPEAR HERE FOR APPROVAL.
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div className="tech-card tech-border">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Group
+              <thead className="tech-border-b">
+                <tr className="bg-paper">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-ink/60 uppercase tracking-wider">
+                    GROUP
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Requested By
+                  <th className="px-4 py-3 text-left text-xs font-medium text-ink/60 uppercase tracking-wider">
+                    REQUESTED BY
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Group ID
+                  <th className="px-4 py-3 text-left text-xs font-medium text-ink/60 uppercase tracking-wider">
+                    GROUP ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Company Requested
+                  <th className="px-4 py-3 text-left text-xs font-medium text-ink/60 uppercase tracking-wider">
+                    COMPANY
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                  <th className="px-4 py-3 text-right text-xs font-medium text-ink/60 uppercase tracking-wider">
+                    ACTIONS
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-border">
                 {joinRequests.map((request) => (
-                  <tr key={request.group_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                          <Users className="w-5 h-5 text-white" />
+                  <tr key={request.group_id} className="hover:bg-paper/50 transition-colors">
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-shrink-0 h-8 w-8 tech-border flex items-center justify-center">
+                          <Users className="w-4 h-4 text-ink" />
                         </div>
-                        <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
+                        <div>
+                          <div className="text-sm font-medium text-ink">
                             {request.group_name}
                           </div>
-                          <div className="text-sm text-gray-500">
-                            Telegram Group
+                          <div className="text-xs text-ink/60 uppercase tracking-wide">
+                            TELEGRAM GROUP
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {request.requested_by_handle || 'Unknown'}
+                    <td className="px-4 py-4">
+                      <div className="text-sm text-ink">
+                        {request.requested_by_handle || 'UNKNOWN'}
                       </div>
                       {request.requested_by_user_id && (
-                        <div className="text-sm text-gray-500">
+                        <div className="text-xs text-ink/60 font-mono">
                           ID: {request.requested_by_user_id}
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-mono text-gray-700">
+                    <td className="px-4 py-4">
+                      <div className="text-sm font-mono text-ink">
                         {request.group_id}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
+                    <td className="px-4 py-4">
+                      <div className="text-sm text-ink">
                         {request.requested_company_name}
                       </div>
                       {request.requested_company_name?.toLowerCase() === companyName.toLowerCase() ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 mt-1">
-                          Matches your company
+                        <span className="inline-block text-xs text-ink/60 uppercase tracking-wide mt-1">
+                          ✓ MATCH
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mt-1">
-                          Name mismatch
+                        <span className="inline-block text-xs text-ink/60 uppercase tracking-wide mt-1">
+                          ⚠ MISMATCH
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <td className="px-4 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => handleApprove(request.group_id, request.group_name)}
                           disabled={processingId === request.group_id}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                          className="tech-button inline-flex items-center gap-1 px-3 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Approve request"
                         >
-                          <CheckCircle className="w-4 h-4" />
-                          {processingId === request.group_id ? 'Processing...' : 'Approve'}
+                          <Check className="w-3 h-3" />
+                          {processingId === request.group_id ? 'PROCESSING' : 'APPROVE'}
                         </button>
                         <button
                           onClick={() => handleDeny(request.group_id, request.group_name)}
                           disabled={processingId === request.group_id}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                          className="tech-button inline-flex items-center gap-1 px-3 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Deny request"
                         >
-                          <XCircle className="w-4 h-4" />
-                          {processingId === request.group_id ? 'Processing...' : 'Deny'}
+                          <X className="w-3 h-3" />
+                          {processingId === request.group_id ? 'PROCESSING' : 'DENY'}
                         </button>
                       </div>
                     </td>
@@ -275,39 +279,39 @@ export default function JoinRequestsPage() {
       )}
 
       {/* Information Panel */}
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">How It Works</h3>
-        <div className="space-y-3 text-sm text-gray-700">
+      <div className="tech-card tech-border p-4">
+        <span className="section-tag inline-block mb-3">WORKFLOW GUIDE</span>
+        <div className="space-y-2 text-xs">
           <div className="flex gap-3">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold">
+            <div className="flex-shrink-0 w-5 h-5 tech-border flex items-center justify-center text-ink font-mono font-bold text-xs">
               1
             </div>
-            <p>
-              When a Telegram group wants to use the KPI bot, they add the bot to their group and respond to the registration prompt with your company name.
+            <p className="text-ink/80 leading-relaxed">
+              TELEGRAM GROUP ADDS BOT AND RESPONDS TO REGISTRATION PROMPT WITH COMPANY NAME
             </p>
           </div>
           <div className="flex gap-3">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold">
+            <div className="flex-shrink-0 w-5 h-5 tech-border flex items-center justify-center text-ink font-mono font-bold text-xs">
               2
             </div>
-            <p>
-              The request appears here if the company name they provided matches your company name (case-insensitive).
+            <p className="text-ink/80 leading-relaxed">
+              REQUEST APPEARS HERE IF COMPANY NAME MATCHES (CASE-INSENSITIVE)
             </p>
           </div>
           <div className="flex gap-3">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold">
+            <div className="flex-shrink-0 w-5 h-5 tech-border flex items-center justify-center text-ink font-mono font-bold text-xs">
               3
             </div>
-            <p>
-              <strong>Approve:</strong> Activates the group and allows them to use all KPI bot features. The group will be notified automatically.
+            <p className="text-ink/80 leading-relaxed">
+              <strong className="text-ink">APPROVE:</strong> ACTIVATES GROUP AND ENABLES ALL KPI BOT FEATURES. GROUP IS NOTIFIED AUTOMATICALLY.
             </p>
           </div>
           <div className="flex gap-3">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold">
+            <div className="flex-shrink-0 w-5 h-5 tech-border flex items-center justify-center text-ink font-mono font-bold text-xs">
               4
             </div>
-            <p>
-              <strong>Deny:</strong> Removes the request. The group can submit a new request if needed.
+            <p className="text-ink/80 leading-relaxed">
+              <strong className="text-ink">DENY:</strong> REMOVES REQUEST. GROUP CAN SUBMIT NEW REQUEST IF NEEDED.
             </p>
           </div>
         </div>

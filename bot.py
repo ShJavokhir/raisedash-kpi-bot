@@ -19,6 +19,7 @@ from sentry_config import SentryConfig
 from database import Database
 from handlers import BotHandlers
 from reminders import ReminderService
+from notification_service import NotificationService
 from time_utils import utc_now
 from logging_config import setup_logging
 
@@ -82,8 +83,9 @@ class IncidentBot:
         )
         logger.info(f"Bot handlers initialized with {len(Config.PLATFORM_ADMIN_IDS)} platform admins")
 
-        # Initialize reminder service
+        # Initialize reminder and notification services
         self.reminder_service = None  # Will be initialized after app is built
+        self.notification_service = None  # Will be initialized after app is built
 
         # Register handlers
         self._register_handlers()
@@ -179,6 +181,47 @@ class IncidentBot:
             logger.debug(f"Waiting {interval}s until next reminder check...")
             await asyncio.sleep(interval)
 
+    async def _notification_task(self):
+        """Background task for processing pending notifications."""
+        logger.info("=" * 60)
+        logger.info("NOTIFICATION SERVICE STARTING")
+        logger.info("=" * 60)
+
+        # Initialize notification service with the bot instance
+        logger.info("Initializing notification service...")
+        self.notification_service = NotificationService(self.db, self.application.bot)
+
+        # Check notifications more frequently (every 5 seconds)
+        interval = 5
+        logger.info(f"Notification check interval: {interval} seconds")
+        logger.info("Notification service initialized and running")
+
+        check_count = 0
+        while True:
+            try:
+                check_count += 1
+                logger.debug(f"Running notification check #{check_count}...")
+                start_time = utc_now()
+
+                await self.notification_service.process_pending_notifications()
+
+                elapsed = (utc_now() - start_time).total_seconds()
+                logger.debug(f"Notification check #{check_count} completed in {elapsed:.2f}s")
+
+                # Periodic cleanup (once per hour)
+                if utc_now().minute == 0:
+                    logger.info("Running hourly notification cleanup...")
+                    self.db.cleanup_old_notifications(days=7)
+                    logger.info("Hourly notification cleanup completed")
+
+            except Exception as e:
+                logger.error(f"Error in notification task (check #{check_count}): {e}", exc_info=True)
+                SentryConfig.capture_exception(e, task="notification_check")
+
+            # Wait for next interval
+            logger.debug(f"Waiting {interval}s until next notification check...")
+            await asyncio.sleep(interval)
+
     async def _post_init(self, application: Application):
         """Post-initialization callback to start background tasks."""
         logger.info("=" * 60)
@@ -192,9 +235,11 @@ class IncidentBot:
         else:
             logger.warning("Bot user ID not available")
 
-        # Start the reminder task
+        # Start the reminder and notification tasks
         logger.info("Creating reminder task...")
         asyncio.create_task(self._reminder_task())
+        logger.info("Creating notification task...")
+        asyncio.create_task(self._notification_task())
         logger.info("Background tasks started successfully")
 
     async def _post_stop(self, application: Application):

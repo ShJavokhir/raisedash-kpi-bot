@@ -75,6 +75,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     //   );
     // }
 
+    // Create notification for the group before deleting
+    const createNotification = db.prepare(`
+      INSERT INTO pending_notifications (group_id, message_type, message_data, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    createNotification.run(
+      groupId,
+      'group_denied',
+      JSON.stringify({
+        group_name: group.group_name,
+        company_name: company.name
+      }),
+      new Date().toISOString()
+    );
+
     // Delete the pending request
     // Note: We delete instead of marking as denied to keep the database clean
     // If the group wants to request again, they can do so
@@ -86,6 +102,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Log audit event
     console.log(`Group ${groupId} (${group.group_name}) join request denied for company ${company.company_id} (${company.name})`);
+    console.log(`Notification queued for group ${groupId}`);
 
     return NextResponse.json({
       success: true,

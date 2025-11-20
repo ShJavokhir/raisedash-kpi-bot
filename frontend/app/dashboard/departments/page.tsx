@@ -10,6 +10,7 @@ interface Department {
   created_at: string;
   updated_at: string;
   metadata: any;
+  member_count: number;
 }
 
 export default function DepartmentsPage() {
@@ -147,13 +148,17 @@ export default function DepartmentsPage() {
                   <Trash2 className="h-3 w-3" strokeWidth={1} />
                 </button>
               </div>
-              <div className="pt-3 tech-border-t">
+              <div className="pt-3 tech-border-t space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-neutral-500">Members</span>
+                  <span className="text-xs text-neutral-900 font-mono font-bold">{department.member_count || 0}</span>
+                </div>
                 <a
                   href={`/dashboard/departments/${department.department_id}`}
-                  className="inline-flex items-center text-[10px] uppercase tracking-wider text-neutral-600 hover:text-neutral-900 font-bold transition-colors"
+                  className="tech-button w-full flex items-center justify-center gap-2 hover:bg-neutral-900 hover:text-white transition-colors"
                 >
-                  <Users className="h-3 w-3 mr-1" strokeWidth={1} />
-                  Manage Members
+                  <Users className="h-3 w-3" strokeWidth={1} />
+                  <span className="text-[10px] uppercase tracking-wider font-bold">Manage Members</span>
                 </a>
               </div>
             </div>

@@ -17,14 +17,24 @@ export async function GET(request: NextRequest) {
     `).all(session.companyId) as Department[];
 
     return NextResponse.json({
-      departments: departments.map(dept => ({
-        department_id: dept.department_id,
-        company_id: dept.company_id,
-        name: dept.name,
-        metadata: parseJSON(dept.metadata, {}),
-        created_at: dept.created_at,
-        updated_at: dept.updated_at,
-      })),
+      departments: departments.map(dept => {
+        // Count members for this department
+        const memberCountResult = db.prepare(`
+          SELECT COUNT(*) as member_count
+          FROM department_members
+          WHERE department_id = ?
+        `).get(dept.department_id) as { member_count: number };
+
+        return {
+          department_id: dept.department_id,
+          company_id: dept.company_id,
+          name: dept.name,
+          metadata: parseJSON(dept.metadata, {}),
+          created_at: dept.created_at,
+          updated_at: dept.updated_at,
+          member_count: memberCountResult.member_count || 0,
+        };
+      }),
     });
   } catch (error) {
     console.error('Get departments error:', error);
