@@ -253,10 +253,6 @@ class BotHandlers:
         except (TypeError, ValueError):
             return False
 
-    def _is_platform_dispatcher_command(self, args: List[str]) -> bool:
-        """Detect the hidden /add_dispatcher <company_id> <user_id> format."""
-        return len(args) >= 2 and all(self._is_int_argument(arg) for arg in args[:2])
-
     def _log_audit_event(self, event: str, **payload: Any):
         """Log structured audit events for sensitive operations."""
         logger.info("AUDIT %s | %s", event, payload)
@@ -476,9 +472,7 @@ class BotHandlers:
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
             "/add_department <name> - Create a department for this company (Admin only)\n"
-            "/add_department_member <department_id> <@user> - Add a member to a department (Admin only)\n"
             "/list_departments - Show configured departments for this company\n"
-            "/register_driver - Register yourself as a driver\n"
             "/new_issue - Reply to an issue message with /new_issue to start a ticket\n\n"
             "🔧 Features:\n"
             "- Department-based workflow (no more tiers)\n"
@@ -626,138 +620,6 @@ class BotHandlers:
         )
         logger.info(f"Configured managers for group {chat.id}: {manager_handles}")
 
-    async def add_dispatcher_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /add_dispatcher command."""
-        user = update.effective_user
-        chat = update.effective_chat
-
-        if self._is_platform_admin(user.id) and (
-            not chat or not self._is_group_chat(chat) or self._is_platform_dispatcher_command(context.args)
-        ):
-            await self._handle_platform_add_dispatcher(update, context)
-            return
-
-        if not chat or not self._is_group_chat(chat):
-            await self._send_error_message(update, "This command only works in groups.")
-            return
-
-        member = await context.bot.get_chat_member(chat.id, user.id)
-
-        if member.status not in ['creator', 'administrator']:
-            await self._send_error_message(update, "Only group admins can add dispatchers.")
-            return
-
-        membership = await self._require_active_group(update, context)
-        if not membership:
-            return
-
-        # Parse dispatcher mention
-        if not context.args:
-            await update.message.reply_text(
-                "Usage: /add_dispatcher @username\n"
-                "Example: /add_dispatcher @john"
-            )
-            return
-
-        # Resolve user mention using the helper method
-        dispatcher_id, dispatcher_handle, dispatcher_user_object = self._resolve_user_mention(update, context, arg_index=0)
-
-        if not dispatcher_id:
-            # User mention was found but not in database
-            if dispatcher_handle:
-                await self._send_error_message(
-                    update,
-                    f"User {dispatcher_handle} has not interacted with the bot yet. "
-                    f"Please ask them to send any message to the bot first or use /register_driver."
-                )
-            else:
-                await self._send_error_message(
-                    update,
-                    "Please mention the user or provide their numeric Telegram user id."
-                )
-            return
-
-        group_info = membership['group']
-        company_info = membership.get('company')
-
-        # Add dispatcher to company or group
-        if company_info:
-            updated_dispatchers = list(company_info.get('dispatcher_user_ids', []))
-            if dispatcher_id not in updated_dispatchers:
-                updated_dispatchers.append(dispatcher_id)
-            self.db.update_company_roles(
-                company_id=company_info['company_id'],
-                dispatcher_user_ids=updated_dispatchers
-            )
-            self.db.attach_group_to_company(
-                group_id=group_info['group_id'],
-                group_name=group_info['group_name'],
-                company_id=company_info['company_id'],
-                status='active'
-            )
-        else:
-            self.db.add_dispatcher_to_group(chat.id, dispatcher_id)
-
-        # Track user interaction
-        if dispatcher_user_object:
-            self._track_user_interaction(dispatcher_user_object, group_id=chat.id, team_role='Dispatcher')
-        elif dispatcher_handle:
-            self.db.upsert_user(dispatcher_id, dispatcher_handle, 'Dispatcher')
-        else:
-            # Ensure user record exists with fallback handle
-            self._ensure_user_role(dispatcher_id, 'Dispatcher', f"User_{dispatcher_id}")
-
-        display_name = dispatcher_handle if dispatcher_handle else f"User {dispatcher_id}"
-        await update.message.reply_text(
-            f"✅ Added {display_name} as a dispatcher for this group."
-        )
-
-    async def _handle_platform_add_dispatcher(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Hidden platform-admin command to attach a dispatcher to a company."""
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "Usage: /add_dispatcher <company_id> <dispatcher_user_id>"
-            )
-            return
-
-        try:
-            company_id = int(context.args[0])
-            dispatcher_user_id = int(context.args[1])
-        except ValueError:
-            await self._send_error_message(
-                update,
-                "company_id and dispatcher_user_id must be integers."
-            )
-            return
-
-        company = self.db.get_company_by_id(company_id)
-        if not company:
-            await self._send_error_message(update, f"Company {company_id} does not exist.")
-            return
-
-        already_configured = dispatcher_user_id in company.get('dispatcher_user_ids', [])
-        if not already_configured:
-            self.db.add_dispatcher_to_company(company_id, dispatcher_user_id)
-
-        self._ensure_user_role(dispatcher_user_id, 'Dispatcher')
-
-        if already_configured:
-            message = (
-                f"ℹ️ User {dispatcher_user_id} is already a dispatcher for {company['name']}."
-            )
-        else:
-            message = (
-                f"✅ Added dispatcher {dispatcher_user_id} to {company['name']}."
-            )
-
-        await update.message.reply_text(message)
-        self._log_audit_event(
-            "platform_add_dispatcher",
-            company_id=company_id,
-            dispatcher_user_id=dispatcher_user_id,
-            initiated_by=update.effective_user.id if update.effective_user else None,
-            no_change=already_configured
-        )
 
     async def add_manager_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Hidden platform-admin command to attach a manager to a company."""
@@ -950,84 +812,6 @@ class BotHandlers:
 
         lines = [f"{dept['department_id']}: {dept['name']}" for dept in departments]
         await update.message.reply_text("🏢 Departments:\n" + "\n".join(lines))
-
-    async def add_department_member_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Add a user to a department (admin only)."""
-        if not self._is_group_chat(update.effective_chat):
-            await self._send_error_message(update, "This command only works in groups.")
-            return
-
-        user = update.effective_user
-        chat = update.effective_chat
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ['creator', 'administrator']:
-            await self._send_error_message(update, "Only group admins can add members to departments.")
-            return
-
-        membership = await self._require_active_group(update, context)
-        if not membership:
-            return
-
-        company_id = membership['group'].get('company_id')
-        if not context.args or len(context.args) < 2:
-            await update.message.reply_text("Usage: /add_department_member <department_id> <@user|user_id>")
-            return
-
-        try:
-            department_id = int(context.args[0])
-        except ValueError:
-            await self._send_error_message(update, "department_id must be a number.")
-            return
-
-        department = self.db.get_department(department_id)
-        if not department or department['company_id'] != company_id:
-            await self._send_error_message(update, "Department not found for this company.")
-            return
-
-        # Resolve user mention using the helper method
-        target_user_id, target_handle, target_user_obj = self._resolve_user_mention(update, context, arg_index=-1)
-
-        if not target_user_id:
-            # User mention was found but not in database
-            if target_handle:
-                await self._send_error_message(
-                    update,
-                    f"User {target_handle} has not interacted with the bot yet. "
-                    f"Please ask them to send any message to the bot first or use /register_driver."
-                )
-            else:
-                await self._send_error_message(
-                    update,
-                    "Please mention the user or provide their numeric Telegram user id."
-                )
-            return
-
-        self.db.add_member_to_department(department_id, target_user_id)
-
-        if target_user_obj:
-            self._track_user_interaction(target_user_obj, group_id=chat.id)
-        elif target_handle:
-            self.db.upsert_user(target_user_id, target_handle, team_role=None)
-
-        display_name = target_handle if target_handle else f"User {target_user_id}"
-        await update.message.reply_text(
-            f"✅ Added {display_name} to department {department['name']} (ID {department_id})."
-        )
-
-    async def register_driver_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /register_driver command."""
-        user = update.effective_user
-        chat = update.effective_chat
-        group_id = chat.id if chat and self._is_group_chat(chat) else None
-
-        # Track user with Driver role
-        self._track_user_interaction(user, group_id=group_id, team_role='Driver')
-
-        await update.message.reply_text(
-            f"✅ You have been registered as a Driver!\n"
-            f"You can now report incidents using /new_issue"
-        )
-        logger.info(f"Registered driver: {user.id} ({self._get_user_handle(user)})")
 
     async def new_issue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new_issue command - creates a new incident."""

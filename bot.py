@@ -106,7 +106,6 @@ class IncidentBot:
             ("add_group", self.bot_handlers.add_group_command),
             ("add_department", self.bot_handlers.add_department_command),
             ("list_departments", self.bot_handlers.list_departments_command),
-            ("add_department_member", self.bot_handlers.add_department_member_command),
             ("new_issue", self.bot_handlers.new_issue_command),
         ]
 
