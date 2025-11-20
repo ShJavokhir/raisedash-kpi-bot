@@ -14,6 +14,72 @@ interface IncidentDetail {
   departmentSessions: any[];
 }
 
+const formatEventActor = (event: any) => {
+  if (event.first_name || event.last_name) {
+    return [event.first_name, event.last_name].filter(Boolean).join(' ');
+  }
+  if (event.username) return event.username;
+  if (event.actor_user_id) return `User ${event.actor_user_id}`;
+  return 'System';
+};
+
+const describeEvent = (event: any) => {
+  const actor = formatEventActor(event);
+  const metadata = event.metadata || {};
+
+  switch (event.event_type) {
+    case 'department_assigned': {
+      const toDept = metadata.department_name || 'the department';
+      if (metadata.previous_department_name) {
+        return `${actor} moved department from ${metadata.previous_department_name} to ${toDept}`;
+      }
+      return `${actor} assigned the incident to ${toDept}`;
+    }
+    case 'claim':
+      return metadata.is_first_claim
+        ? `${actor} claimed the incident for ${metadata.department_name || 'the department'}`
+        : `${actor} joined the claim for ${metadata.department_name || 'the department'}`;
+    case 'release': {
+      const remaining =
+        typeof metadata.remaining_active === 'number'
+          ? `${metadata.remaining_active} active ${metadata.remaining_active === 1 ? 'claimer' : 'claimers'} remaining`
+          : null;
+      const deptPart = metadata.department_name ? ` for ${metadata.department_name}` : '';
+      return `${actor} released their claim${deptPart}${remaining ? ` (${remaining})` : ''}`;
+    }
+    case 'resolution_requested':
+      return `Awaiting resolution summary from ${actor}${metadata.department_name ? ` (${metadata.department_name})` : ''}`;
+    case 'resolve':
+      return `${actor} resolved the incident${metadata.department_name ? ` for ${metadata.department_name}` : ''}`;
+    case 'auto_closed':
+      return `Incident auto-closed${metadata.reason ? `: ${metadata.reason}` : ''}`;
+    case 'create':
+      return `${actor} created the incident`;
+    default:
+      return `${(event.event_type || '').replace(/_/g, ' ')}` + (actor ? ` by ${actor}` : '');
+  }
+};
+
+const getEventDetail = (event: any) => {
+  const metadata = event.metadata || {};
+
+  switch (event.event_type) {
+    case 'department_assigned': {
+      if (!metadata.previous_department_name && !metadata.department_name) return null;
+      const prev = metadata.previous_department_name || 'Unassigned';
+      const next = metadata.department_name || 'Unknown department';
+      return `${prev} -> ${next}`;
+    }
+    case 'release':
+      if (typeof metadata.remaining_active === 'number') {
+        return `${metadata.remaining_active} active ${metadata.remaining_active === 1 ? 'claimer' : 'claimers'} remaining`;
+      }
+      return null;
+    default:
+      return null;
+  }
+};
+
 export default function IncidentDetailPage() {
   const params = useParams();
   const [data, setData] = useState<IncidentDetail | null>(null);
@@ -126,37 +192,38 @@ export default function IncidentDetailPage() {
             </div>
             <div className="flow-root">
               <ul className="-mb-6">
-                {events.map((event, idx) => (
-                  <li key={event.event_id}>
-                    <div className="relative pb-6">
-                      {idx !== events.length - 1 && (
-                        <span
-                          className="absolute top-3 left-1 -ml-px h-full w-px bg-neutral-300"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <div className="relative flex space-x-3">
-                        <div>
-                          <span className="h-2 w-2 bg-neutral-900 flex items-center justify-center">
-                          </span>
-                        </div>
-                        <div className="flex min-w-0 flex-1 justify-between space-x-4">
+                {events.map((event, idx) => {
+                  const detail = getEventDetail(event);
+                  return (
+                    <li key={event.event_id}>
+                      <div className="relative pb-6">
+                        {idx !== events.length - 1 && (
+                          <span
+                            className="absolute top-3 left-1 -ml-px h-full w-px bg-neutral-300"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <div className="relative flex space-x-3">
                           <div>
-                            <p className="text-xs uppercase tracking-wider text-neutral-900">
-                              {event.event_type.replace('_', ' ')}
-                              {event.first_name && (
-                                <span className="text-neutral-500 ml-1">by {event.first_name}</span>
-                              )}
-                            </p>
+                            <span className="h-2 w-2 bg-neutral-900 flex items-center justify-center">
+                            </span>
                           </div>
-                          <div className="whitespace-nowrap text-right text-[10px] text-neutral-500 font-mono">
-                            {formatDate(event.at)}
+                          <div className="flex min-w-0 flex-1 justify-between space-x-4">
+                            <div>
+                              <p className="text-xs text-neutral-900 font-semibold">{describeEvent(event)}</p>
+                              {detail && (
+                                <p className="text-[11px] text-neutral-500 mt-1">{detail}</p>
+                              )}
+                            </div>
+                            <div className="whitespace-nowrap text-right text-[10px] text-neutral-500 font-mono">
+                              {formatDate(event.at)}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </div>
