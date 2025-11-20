@@ -11,6 +11,8 @@ from telegram.error import TelegramError
 
 from database import Database
 from message_builder import MessageBuilder
+from config import Config
+from reporting import KPIReportGenerator, html_to_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,15 @@ class BotHandlers:
         self.message_builder = MessageBuilder()
         self.platform_admin_ids = set(platform_admin_ids or [])
         self.bot_user_id = bot_user_id
+        self.report_generator = KPIReportGenerator(
+            db,
+            Config.REPORT_TIMEZONE,
+            Config.get_report_week_end_index(),
+            Config.REPORT_TEMPLATE_PATH,
+            Config.get_sla_unclaimed_seconds(),
+            Config.get_sla_escalation_seconds(),
+            Config.get_summary_timeout_seconds()
+        )
 
     def _get_user_handle(self, user) -> str:
         """Get user's handle with @ prefix."""
@@ -365,6 +376,58 @@ class BotHandlers:
             "Start by configuring managers with /configure_managers!"
         )
         await update.message.reply_text(welcome_message)
+
+    async def report_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /report <company_id> <day|week|month> (platform admins only)."""
+        user = update.effective_user
+        args = context.args or []
+
+        if not self._is_platform_admin(user.id if user else None):
+            await self._send_error_message(update, "Only platform admins can generate reports.")
+            return
+
+        if len(args) < 2 or not self._is_int_argument(args[0]):
+            await self._send_error_message(
+                update,
+                "Usage: /report <company_id> <day|week|month>"
+            )
+            return
+
+        company_id = int(args[0])
+        period = args[1].lower()
+        if period not in ("day", "week", "month"):
+            await self._send_error_message(update, "Period must be one of: day, week, month.")
+            return
+
+        company = self.db.get_company_by_id(company_id)
+        if not company:
+            await self._send_error_message(update, f"Company {company_id} does not exist.")
+            return
+
+        await update.effective_message.reply_text(
+            f"⏳ Building KPI report for {company['name']} ({period})..."
+        )
+
+        try:
+            report_data, html = self.report_generator.build_report(company, period)
+        except Exception as exc:
+            logger.error(f"Failed to build report for company {company_id}: {exc}", exc_info=True)
+            await self._send_error_message(update, "Failed to generate report. Please try again.")
+            return
+
+        filename = (
+            f"kpi_report_company{company_id}_{period}_"
+            f"{report_data['meta']['window_end'][:10]}.html"
+        )
+
+        await update.effective_message.reply_document(
+            document=html_to_bytes(html, filename),
+            filename=filename,
+            caption=(
+                f"KPI report for {company['name']} ({report_data['meta']['period_label']}, "
+                f"{period})"
+            )
+        )
 
     async def configure_managers_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /configure_managers command."""

@@ -33,6 +33,11 @@ class Config:
     # Background task interval
     REMINDER_CHECK_INTERVAL_MINUTES = int(os.getenv('REMINDER_CHECK_INTERVAL_MINUTES', '5'))
 
+    # Reporting
+    REPORT_TIMEZONE = os.getenv('REPORT_TIMEZONE', 'America/New_York')
+    REPORT_WEEK_END_DAY = os.getenv('REPORT_WEEK_END_DAY', 'Sunday')  # Sunday|Monday|...|Saturday
+    REPORT_TEMPLATE_PATH = os.getenv('REPORT_TEMPLATE_PATH', 'assets/report_template.html')
+
     # Logging
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
@@ -69,3 +74,17 @@ class Config:
     def get_summary_timeout_seconds(cls) -> int:
         """Get resolution summary timeout window in seconds."""
         return cls.SLA_SUMMARY_TIMEOUT_MINUTES * 60
+
+    @classmethod
+    def get_report_week_end_index(cls) -> int:
+        """Return weekday index (0=Monday ... 6=Sunday) for report windows."""
+        mapping = {
+            'monday': 0,
+            'tuesday': 1,
+            'wednesday': 2,
+            'thursday': 3,
+            'friday': 4,
+            'saturday': 5,
+            'sunday': 6
+        }
+        return mapping.get(cls.REPORT_WEEK_END_DAY.lower(), 6)
