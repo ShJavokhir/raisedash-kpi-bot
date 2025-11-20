@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatDate, formatIncidentStatus, getStatusColor, truncate } from '@/lib/utils';
-import { Search, Filter } from 'lucide-react';
+import { Search, Filter, ExternalLink } from 'lucide-react';
 
 interface Incident {
   incident_id: string;
@@ -11,6 +11,8 @@ interface Incident {
   description: string;
   department_name: string;
   group_name: string;
+  group_id: number;
+  pinned_message_id: number;
   created_by_username: string;
   created_by_first_name: string;
   resolved_by_username: string;
@@ -18,6 +20,16 @@ interface Incident {
   t_created: string;
   t_resolved: string;
 }
+
+const openIncidentInTelegram = (groupId: number, messageId: number) => {
+  if (!groupId || !messageId) {
+    alert('Unable to open in Telegram: Missing group or message information');
+    return;
+  }
+  // Convert group ID to positive format for Telegram deep link
+  const positiveId = Math.abs(groupId).toString().replace(/^100/, '');
+  window.open(`https://t.me/c/${positiveId}/${messageId}`, '_blank');
+};
 
 export default function IncidentsPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -80,42 +92,38 @@ export default function IncidentsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Search */}
           <div>
-            <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+              <Search className="h-3 w-3" strokeWidth={1} />
               Search Query
             </label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
-              <input
-                type="text"
-                placeholder="SEARCH INCIDENTS..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="tech-input w-full pl-10"
-              />
-            </div>
+            <input
+              type="text"
+              placeholder="SEARCH INCIDENTS..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="tech-input w-full"
+            />
           </div>
 
           {/* Status filter */}
           <div>
-            <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+              <Filter className="h-3 w-3" strokeWidth={1} />
               Status Filter
             </label>
-            <div className="relative">
-              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="tech-input w-full pl-10 appearance-none uppercase text-xs"
-              >
-                <option value="">All Statuses</option>
-                <option value="Awaiting_Department">Awaiting Department</option>
-                <option value="Awaiting_Claim">Awaiting Claim</option>
-                <option value="In_Progress">In Progress</option>
-                <option value="Awaiting_Summary">Awaiting Summary</option>
-                <option value="Resolved">Resolved</option>
-                <option value="Closed">Closed</option>
-              </select>
-            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="tech-input w-full appearance-none uppercase text-xs"
+            >
+              <option value="">All Statuses</option>
+              <option value="Awaiting_Department">Awaiting Department</option>
+              <option value="Awaiting_Claim">Awaiting Claim</option>
+              <option value="In_Progress">In Progress</option>
+              <option value="Awaiting_Summary">Awaiting Summary</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Closed">Closed</option>
+            </select>
           </div>
         </div>
         <div className="mt-3 text-[10px] text-neutral-400 uppercase tracking-wide">
@@ -188,12 +196,24 @@ export default function IncidentsPage() {
                       {formatDate(incident.t_created)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs">
-                      <Link
-                        href={`/dashboard/incidents/${incident.incident_id}`}
-                        className="tech-button px-2 py-1 inline-block text-[10px]"
-                      >
-                        View
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/dashboard/incidents/${incident.incident_id}`}
+                          className="tech-button px-2 py-1 inline-block text-[10px]"
+                        >
+                          View
+                        </Link>
+                        {incident.group_id && incident.pinned_message_id && (
+                          <button
+                            onClick={() => openIncidentInTelegram(incident.group_id, incident.pinned_message_id)}
+                            className="tech-button px-2 py-1 inline-flex items-center gap-1 text-[10px]"
+                            title="Open in Telegram"
+                          >
+                            <ExternalLink className="h-3 w-3" strokeWidth={1} />
+                            TG
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

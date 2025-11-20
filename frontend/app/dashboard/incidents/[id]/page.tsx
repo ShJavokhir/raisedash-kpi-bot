@@ -4,7 +4,16 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { formatDate, formatIncidentStatus, getStatusColor, calculateDuration } from '@/lib/utils';
-import { ArrowLeft, Clock, User, CheckCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Clock, User, CheckCircle, AlertCircle, ExternalLink } from 'lucide-react';
+
+const openIncidentInTelegram = (groupId: number, messageId: number) => {
+  if (!groupId || !messageId) {
+    alert('Unable to open in Telegram: Missing group or message information');
+    return;
+  }
+  const positiveId = Math.abs(groupId).toString().replace(/^100/, '');
+  window.open(`https://t.me/c/${positiveId}/${messageId}`, '_blank');
+};
 
 interface IncidentDetail {
   incident: any;
@@ -154,15 +163,27 @@ export default function IncidentDetailPage() {
                 </Link>
               </p>
             </div>
-            <span className={`badge ${
-              incident.status === 'Resolved' || incident.status === 'Closed'
-                ? 'badge-resolved'
-                : incident.status === 'In_Progress'
-                  ? 'badge-open'
-                  : 'badge-closed'
-            }`}>
-              {formatIncidentStatus(incident.status)}
-            </span>
+            <div className="flex items-center gap-2">
+              {incident.group_id && incident.pinned_message_id && (
+                <button
+                  onClick={() => openIncidentInTelegram(incident.group_id, incident.pinned_message_id)}
+                  className="tech-button px-3 py-1.5 inline-flex items-center gap-2 text-[10px]"
+                  title="Open in Telegram"
+                >
+                  <ExternalLink className="h-3 w-3" strokeWidth={1} />
+                  VIEW IN TG
+                </button>
+              )}
+              <span className={`badge ${
+                incident.status === 'Resolved' || incident.status === 'Closed'
+                  ? 'badge-resolved'
+                  : incident.status === 'In_Progress'
+                    ? 'badge-open'
+                    : 'badge-closed'
+              }`}>
+                {formatIncidentStatus(incident.status)}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -293,9 +314,12 @@ export default function IncidentDetailPage() {
                   <li key={participant.participant_id} className="flex items-center justify-between py-2 tech-border-b last:border-0">
                     <div className="flex items-center">
                       <User className="h-3 w-3 text-neutral-400 mr-2" strokeWidth={1} />
-                      <span className="text-xs text-neutral-900 uppercase tracking-wide">
+                      <Link
+                        href={`/dashboard/users/${participant.user_id}`}
+                        className="text-xs text-neutral-900 uppercase tracking-wide underline hover:text-neutral-600 transition-colors"
+                      >
                         {participant.first_name || participant.username || `User ${participant.user_id}`}
-                      </span>
+                      </Link>
                     </div>
                     <span className="text-[10px] text-neutral-500 uppercase tracking-wider">{participant.status}</span>
                   </li>
