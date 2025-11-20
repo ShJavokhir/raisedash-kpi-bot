@@ -32,6 +32,7 @@ export default function DepartmentMembersPage() {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [adding, setAdding] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   useEffect(() => {
     fetchMembers();
@@ -112,7 +113,18 @@ export default function DepartmentMembersPage() {
   };
 
   const memberUserIds = new Set(members.map(m => m.user_id));
-  const usersToAdd = availableUsers.filter(u => !memberUserIds.has(u.user_id));
+  let usersToAdd = availableUsers.filter(u => !memberUserIds.has(u.user_id));
+
+  // Filter users based on search query
+  if (userSearchQuery.trim()) {
+    const query = userSearchQuery.toLowerCase();
+    usersToAdd = usersToAdd.filter(user => {
+      const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
+      const username = (user.username || '').toLowerCase();
+      const userId = user.user_id.toString();
+      return fullName.includes(query) || username.includes(query) || userId.includes(query);
+    });
+  }
 
   // Client-side search filter for users
   const filteredUsers = useMemo(() => {
@@ -215,11 +227,14 @@ export default function DepartmentMembersPage() {
                           <User className="h-4 w-4 text-neutral-500" strokeWidth={1} />
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-semibold text-neutral-900">
+                          <Link
+                            href={`/dashboard/users/${member.user_id}`}
+                            className="text-sm font-semibold text-neutral-900 hover:text-neutral-600 hover:underline"
+                          >
                             {member.first_name || member.last_name
                               ? `${member.first_name || ''} ${member.last_name || ''}`.trim()
                               : `User ${member.user_id}`}
-                          </div>
+                          </Link>
                         </div>
                       </div>
                     </td>
@@ -262,24 +277,47 @@ export default function DepartmentMembersPage() {
             <form onSubmit={handleAddMember} className="flex flex-col flex-1 min-h-0">
               {/* Search input */}
               <div className="mb-4">
-                <label htmlFor="search" className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                <label htmlFor="user-search" className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
                   Search Users
                 </label>
-                <div className="relative">
+                <div className="relative mb-3">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
                   <input
-                    id="search"
+                    id="user-search"
                     type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Name, username, or ID..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
                     className="tech-input w-full pl-10 uppercase placeholder:normal-case"
                     autoComplete="off"
                   />
                 </div>
-                {searchQuery && (
-                  <p className="mt-2 text-[10px] text-neutral-500 font-mono">
-                    Found {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''}
+              </div>
+              <div className="mb-4">
+                <label htmlFor="user" className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                  Select User ({usersToAdd.length} available)
+                </label>
+                <select
+                  id="user"
+                  required
+                  value={selectedUserId}
+                  onChange={(e) => setSelectedUserId(e.target.value)}
+                  className="tech-input w-full max-h-48 overflow-y-auto"
+                  size={Math.min(usersToAdd.length + 1, 8)}
+                >
+                  <option value="">Select a user...</option>
+                  {usersToAdd.map((user) => (
+                    <option key={user.user_id} value={user.user_id}>
+                      {user.first_name || user.last_name
+                        ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
+                        : user.username || `User ${user.user_id}`}
+                      {user.username && ` (@${user.username})`}
+                    </option>
+                  ))}
+                </select>
+                {usersToAdd.length === 0 && (
+                  <p className="mt-2 text-[10px] text-neutral-500 font-mono uppercase tracking-wider">
+                    {userSearchQuery ? 'No users match your search.' : 'All users are already members.'}
                   </p>
                 )}
               </div>
@@ -353,7 +391,7 @@ export default function DepartmentMembersPage() {
                   onClick={() => {
                     setShowAddModal(false);
                     setSelectedUserId('');
-                    setSearchQuery('');
+                    setUserSearchQuery('');
                   }}
                   className="tech-button"
                   disabled={adding}
