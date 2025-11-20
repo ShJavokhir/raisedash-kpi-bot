@@ -126,8 +126,8 @@ export async function GET(request: NextRequest) {
       topPerformers,
       incidentsOverTime,
       sla: {
-        claim_rate: parseFloat(claimSLA),
-        resolution_rate: parseFloat(resolutionSLA),
+        claim_rate: parseFloat(String(claimSLA)),
+        resolution_rate: parseFloat(String(resolutionSLA)),
       },
     });
   } catch (error) {
