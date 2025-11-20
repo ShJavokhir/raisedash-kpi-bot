@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Plus, Trash2, User } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, User, Search } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 interface DepartmentMember {
@@ -30,6 +30,7 @@ export default function DepartmentMembersPage() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
@@ -113,82 +114,108 @@ export default function DepartmentMembersPage() {
   const memberUserIds = new Set(members.map(m => m.user_id));
   const usersToAdd = availableUsers.filter(u => !memberUserIds.has(u.user_id));
 
+  // Client-side search filter for users
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery.trim()) return usersToAdd;
+
+    const query = searchQuery.toLowerCase().trim();
+    return usersToAdd.filter(user => {
+      const searchableText = [
+        user.first_name,
+        user.last_name,
+        user.username,
+        `${user.first_name} ${user.last_name}`,
+        `user ${user.user_id}`
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      return searchableText.includes(query);
+    });
+  }, [usersToAdd, searchQuery]);
+
   return (
     <div className="space-y-6">
-      <div>
+      <div className="border-b-2 border-neutral-800 pb-4">
         <Link
           href="/dashboard/departments"
-          className="inline-flex items-center text-sm text-indigo-600 hover:text-indigo-900 mb-4"
+          className="inline-flex items-center text-[10px] uppercase tracking-wider text-neutral-600 hover:text-neutral-900 mb-4 font-semibold"
         >
-          <ArrowLeft className="h-4 w-4 mr-1" />
+          <ArrowLeft className="h-3 w-3 mr-1" strokeWidth={1} />
           Back to Departments
         </Link>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Department Members</h1>
-            <p className="mt-2 text-sm text-gray-600">
-              Manage who has access to this department
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 bg-neutral-900"></div>
+              <h1 className="text-xl font-bold tracking-widest uppercase text-ink">
+                Department <span className="font-light text-neutral-500">Members</span>
+              </h1>
+            </div>
+            <p className="text-[10px] text-neutral-500 pl-4 uppercase tracking-wider">
+              Manage departmental access and member assignments
             </p>
           </div>
           <button
             onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+            className="tech-button flex items-center gap-2 no-print"
           >
-            <Plus className="h-5 w-5 mr-2" />
+            <Plus className="h-3 w-3" strokeWidth={1} />
             Add Member
           </button>
         </div>
       </div>
 
       {/* Members list */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="tech-border bg-white overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+              <span className="text-xs uppercase tracking-wider text-neutral-500">Loading Members...</span>
+            </div>
           </div>
         ) : members.length === 0 ? (
           <div className="text-center py-12">
-            <User className="mx-auto h-12 w-12 text-gray-400" />
-            <p className="mt-4 text-gray-500">No members yet</p>
+            <User className="mx-auto h-8 w-8 text-neutral-400 mb-4" strokeWidth={1} />
+            <p className="text-xs uppercase tracking-wider text-neutral-500 mb-4">No members yet</p>
             <button
               onClick={() => setShowAddModal(true)}
-              className="mt-4 text-indigo-600 hover:text-indigo-900 font-medium"
+              className="tech-button"
             >
-              Add your first member
+              Add First Member
             </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full">
+              <thead className="tech-border-b bg-subtle">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-[10px] font-semibold uppercase tracking-wider">
                     User
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-[10px] font-semibold uppercase tracking-wider">
                     Username
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-[10px] font-semibold uppercase tracking-wider">
                     Role
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-[10px] font-semibold uppercase tracking-wider">
                     Added
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-border">
                 {members.map((member) => (
-                  <tr key={member.user_id} className="hover:bg-gray-50">
+                  <tr key={member.user_id} className="hover:bg-subtle transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10 bg-indigo-100 rounded-full flex items-center justify-center">
-                          <User className="h-5 w-5 text-indigo-600" />
+                        <div className="flex-shrink-0 h-8 w-8 tech-border bg-white flex items-center justify-center">
+                          <User className="h-4 w-4 text-neutral-500" strokeWidth={1} />
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
+                          <div className="text-sm font-semibold text-neutral-900">
                             {member.first_name || member.last_name
                               ? `${member.first_name || ''} ${member.last_name || ''}`.trim()
                               : `User ${member.user_id}`}
@@ -196,23 +223,24 @@ export default function DepartmentMembersPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-neutral-600">
                       {member.username || member.telegram_handle || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                      <span className="badge">
                         {member.team_role || 'N/A'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-[10px] font-mono text-neutral-500 uppercase tracking-wider">
                       {formatDate(member.added_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
                         onClick={() => handleRemoveMember(member.user_id)}
-                        className="text-red-600 hover:text-red-900"
+                        className="p-1 text-neutral-400 hover:text-neutral-900 transition-colors"
+                        title="Remove member"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3 w-3" strokeWidth={1} />
                       </button>
                     </td>
                   </tr>
@@ -225,45 +253,117 @@ export default function DepartmentMembersPage() {
 
       {/* Add member modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full m-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Add Member</h3>
-            <form onSubmit={handleAddMember}>
+        <div className="fixed inset-0 bg-neutral-900 bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="tech-border bg-white p-6 max-w-lg w-full max-h-[80vh] flex flex-col">
+            <div className="section-header mb-6">
+              <div className="section-tag">Add Member</div>
+            </div>
+
+            <form onSubmit={handleAddMember} className="flex flex-col flex-1 min-h-0">
+              {/* Search input */}
               <div className="mb-4">
-                <label htmlFor="user" className="block text-sm font-medium text-gray-700 mb-2">
-                  Select User
+                <label htmlFor="search" className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                  Search Users
                 </label>
-                <select
-                  id="user"
-                  required
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Select a user...</option>
-                  {usersToAdd.map((user) => (
-                    <option key={user.user_id} value={user.user_id}>
-                      {user.first_name || user.username || `User ${user.user_id}`}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
+                  <input
+                    id="search"
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Name, username, or ID..."
+                    className="tech-input w-full pl-10 uppercase placeholder:normal-case"
+                    autoComplete="off"
+                  />
+                </div>
+                {searchQuery && (
+                  <p className="mt-2 text-[10px] text-neutral-500 font-mono">
+                    Found {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''}
+                  </p>
+                )}
               </div>
-              <div className="flex justify-end gap-3">
+
+              {/* User list */}
+              <div className="flex-1 min-h-0 mb-6">
+                <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                  Available Users ({usersToAdd.length})
+                </label>
+                <div className="tech-border bg-white max-h-64 overflow-y-auto custom-scrollbar">
+                  {filteredUsers.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <User className="mx-auto h-8 w-8 text-neutral-400 mb-2" strokeWidth={1} />
+                      <p className="text-xs uppercase tracking-wider text-neutral-500">
+                        {searchQuery ? 'No users match your search' : 'No users available'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border">
+                      {filteredUsers.map((user) => (
+                        <label
+                          key={user.user_id}
+                          className={`flex items-center p-3 cursor-pointer transition-colors ${
+                            selectedUserId === String(user.user_id)
+                              ? 'bg-neutral-900 text-white'
+                              : 'hover:bg-subtle'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="user"
+                            value={user.user_id}
+                            checked={selectedUserId === String(user.user_id)}
+                            onChange={(e) => setSelectedUserId(e.target.value)}
+                            className="mr-3 h-4 w-4"
+                          />
+                          <div className="flex items-center flex-1 min-w-0">
+                            <div className={`flex-shrink-0 h-8 w-8 tech-border flex items-center justify-center ${
+                              selectedUserId === String(user.user_id) ? 'bg-white' : 'bg-white'
+                            }`}>
+                              <User className={`h-4 w-4 ${
+                                selectedUserId === String(user.user_id) ? 'text-neutral-900' : 'text-neutral-500'
+                              }`} strokeWidth={1} />
+                            </div>
+                            <div className="ml-3 min-w-0 flex-1">
+                              <div className={`text-sm font-semibold truncate ${
+                                selectedUserId === String(user.user_id) ? 'text-white' : 'text-neutral-900'
+                              }`}>
+                                {user.first_name || user.last_name
+                                  ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
+                                  : `User ${user.user_id}`}
+                              </div>
+                              <div className={`text-xs font-mono truncate ${
+                                selectedUserId === String(user.user_id) ? 'text-neutral-300' : 'text-neutral-500'
+                              }`}>
+                                {user.username || `ID: ${user.user_id}`}
+                              </div>
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 tech-border-t">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
                     setSelectedUserId('');
+                    setSearchQuery('');
                   }}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                  className="tech-button"
                   disabled={adding}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={adding}
-                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={adding || !selectedUserId}
+                  className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {adding ? 'Adding...' : 'Add Member'}
                 </button>
