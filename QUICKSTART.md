@@ -72,7 +72,7 @@ When the bot joins a group it immediately posts:
    /add_group <company_id> <group_id>
    ```
 
-   This copies the company's dispatcher/manager settings into the group, marks it active, and sends a confirmation inside the group.
+   This attaches the group to the company, marks it active, and sends a confirmation inside the group.
 
 Until approval is complete, all workflow commands/buttons respond with a “pending activation” notice.
 

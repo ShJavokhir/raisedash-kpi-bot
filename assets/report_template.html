@@ -118,18 +118,9 @@
       <div class="flex flex-col gap-6 break-inside-avoid">
         <div class="flex-1">
           <div class="section-header">
-            <div class="section-tag">Escalation Analysis</div>
-          </div>
-          <div class="h-[200px] tech-border bg-white p-2 relative">
-            <canvas id="escalationChart"></canvas>
-          </div>
-        </div>
-
-        <div class="flex-1">
-          <div class="section-header">
             <div class="section-tag">Highlights</div>
           </div>
-          <div class="tech-border bg-white p-4 text-xs space-y-3 flex flex-col h-[200px] overflow-hidden">
+          <div class="tech-border bg-white p-4 text-xs space-y-3 flex flex-col h-[360px] overflow-hidden">
             <div class="overflow-y-auto pr-2 space-y-3 custom-scrollbar flex-grow" id="logContainer"></div>
             <div class="mt-auto pt-2 p-2 bg-neutral-100 border border-neutral-200 text-[10px]" id="footnote"></div>
           </div>
@@ -148,11 +139,11 @@
             <tr>
               <th class="px-4 py-3 w-20 font-normal">ID</th>
               <th class="px-4 py-3 font-normal">Personnel</th>
-              <th class="px-4 py-3 font-normal">Tier</th>
+              <th class="px-4 py-3 font-normal">Department</th>
               <th class="px-4 py-3 font-normal text-right">Incidents</th>
               <th class="px-4 py-3 font-normal text-right">Resolved</th>
               <th class="px-4 py-3 font-normal text-right">Active Time</th>
-              <th class="px-4 py-3 font-normal text-right">Escalated</th>
+              <th class="px-4 py-3 font-normal text-right">Transfers</th>
               <th class="px-4 py-3 font-normal text-center">Status</th>
             </tr>
           </thead>
@@ -251,11 +242,11 @@
             <div class="font-bold text-neutral-800">${row.handle}</div>
             <div class="text-[10px] text-neutral-500 uppercase">Incidents: ${row.incidents_touched || 0}</div>
           </td>
-          <td class="px-4 py-3 text-right font-mono">${row.tier}</td>
+          <td class="px-4 py-3 text-right font-mono">${row.department_name || '—'}</td>
           <td class="px-4 py-3 text-right font-mono">${row.incidents_touched || 0}</td>
           <td class="px-4 py-3 text-right font-mono">${row.resolved_self || 0}</td>
           <td class="px-4 py-3 text-right font-mono">${fmtDuration(row.total_active_seconds)}</td>
-          <td class="px-4 py-3 text-right font-mono">${row.escalated_out || 0}</td>
+          <td class="px-4 py-3 text-right font-mono">${row.transferred_out || 0}</td>
           <td class="px-4 py-3 text-center">${statusIcon}</td>
         `;
         tbody.appendChild(tr);
@@ -305,7 +296,6 @@
       const labels = trends.map(t => t.bucket);
       const created = trends.map(t => t.created || 0);
       const closed = trends.map(t => t.closed || 0);
-      const escalated = trends.map(t => t.escalated || 0);
 
       new Chart(ctx, {
         type: 'line',
@@ -313,8 +303,7 @@
           labels,
           datasets: [
             { label: 'Created', data: created, borderColor: '#1a1a1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
-            { label: 'Closed', data: closed, borderColor: '#737373', borderWidth: 1.5, pointRadius: 0, borderDash: [4,4], tension: 0.3 },
-            { label: 'Escalated', data: escalated, borderColor: '#d97706', borderWidth: 1.5, pointRadius: 0, tension: 0.3 }
+            { label: 'Closed', data: closed, borderColor: '#737373', borderWidth: 1.5, pointRadius: 0, borderDash: [4,4], tension: 0.3 }
           ]
         },
         options: {
@@ -326,37 +315,6 @@
       });
     }
 
-    function renderEscalationChart() {
-      const ctx = document.getElementById('escalationChart').getContext('2d');
-      const esc = DATA.escalations || {};
-      const labels = ['Escalations', 'Claimed T2', 'Escalation→Resolve'];
-      const data = [
-        esc.escalations || 0,
-        esc.claimed_t2 || 0,
-        esc.resolved_after_escalation || 0
-      ];
-
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [{
-            label: 'Count',
-            data,
-            backgroundColor: '#525252',
-            borderRadius: 2,
-            barThickness: 18
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: { x: { grid: { display: false } }, y: { beginAtZero: true } }
-        }
-      });
-    }
-
     function init() {
       renderHeader();
       renderCards();
@@ -364,7 +322,6 @@
       renderBacklog();
       renderHighlights();
       renderTrendsChart();
-      renderEscalationChart();
       document.getElementById('timestamp').innerText =
         `Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
     }

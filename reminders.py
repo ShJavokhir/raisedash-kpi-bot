@@ -3,7 +3,7 @@ Reminder module for automated SLA nudges and notifications.
 """
 
 import logging
-from typing import Set
+from typing import Dict
 from telegram import Bot
 from telegram.error import TelegramError
 
@@ -26,14 +26,13 @@ class ReminderService:
 
         # Track which incidents we've already sent reminders for
         # to avoid spamming the same reminder multiple times
-        self._unclaimed_reminded: Set[str] = set()
-        self._escalation_reminded: Set[str] = set()
+        # Maps incident_id -> t_department_assigned snapshot
+        self._unclaimed_reminded: Dict[str, str] = {}
 
     async def check_and_send_reminders(self):
         """Check for incidents that need reminders and send them."""
         try:
             await self._check_unclaimed_reminders()
-            await self._check_escalation_reminders()
             await self._check_summary_timeouts()
         except Exception as e:
             logger.error(f"Error in reminder check: {e}", exc_info=True)
@@ -48,8 +47,12 @@ class ReminderService:
         for incident in unclaimed_incidents:
             incident_id = incident['incident_id']
 
-            # Skip if we've already sent a reminder for this incident
-            if incident_id in self._unclaimed_reminded:
+            last_assigned = incident.get('t_department_assigned')
+            if not last_assigned:
+                continue
+
+            # Skip if we've already sent a reminder for this department assignment
+            if self._unclaimed_reminded.get(incident_id) == last_assigned:
                 continue
 
             try:
@@ -62,12 +65,19 @@ class ReminderService:
                     continue
 
                 # Calculate how long it's been unclaimed
-                minutes_unclaimed = minutes_since(incident['t_created'])
+                anchor_time = incident.get('t_department_assigned') or incident['t_created']
+                minutes_unclaimed = minutes_since(anchor_time)
+
+                department_name = None
+                if incident.get('department_id'):
+                    dept = self.db.get_department(incident['department_id'])
+                    department_name = dept['name'] if dept else None
 
                 # Build and send reminder
                 reminder_text = self.message_builder.build_unclaimed_reminder(
                     incident_id,
-                    minutes_unclaimed
+                    minutes_unclaimed,
+                    department_name
                 )
 
                 # Send as reply to the pinned message
@@ -78,7 +88,7 @@ class ReminderService:
                 )
 
                 # Mark as reminded
-                self._unclaimed_reminded.add(incident_id)
+                self._unclaimed_reminded[incident_id] = last_assigned
                 logger.info(f"Sent unclaimed reminder for {incident_id}")
 
             except TelegramError as e:
@@ -87,72 +97,6 @@ class ReminderService:
             except Exception as e:
                 logger.error(f"Unexpected error processing unclaimed incident {incident_id}: {e}")
                 SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="unclaimed")
-
-    async def _check_escalation_reminders(self):
-        """Check for unclaimed escalations that need reminders."""
-        unclaimed_escalations = self.db.get_unclaimed_escalations(
-            Config.SLA_ESCALATION_NUDGE_MINUTES
-        )
-
-        for incident in unclaimed_escalations:
-            incident_id = incident['incident_id']
-
-            # Skip if we've already sent a reminder for this escalation
-            if incident_id in self._escalation_reminded:
-                continue
-
-            try:
-                # Get group/company info for manager handles
-                membership = self.db.get_company_membership(incident['group_id'])
-                if not membership or not membership.get('group'):
-                    logger.warning(f"No group membership found for incident {incident_id}")
-                    continue
-                if not membership.get('is_active'):
-                    logger.info(f"Skipping escalation reminder for inactive group {incident['group_id']}")
-                    continue
-
-                manager_handles = []
-                seen_handles = set()
-                for source in (membership.get('company'), membership.get('group')):
-                    if not source:
-                        continue
-                    for handle in source.get('manager_handles', []):
-                        if not handle or handle in seen_handles:
-                            continue
-                        seen_handles.add(handle)
-                        manager_handles.append(handle)
-
-                if not manager_handles:
-                    logger.warning(f"No managers configured for group {incident['group_id']}")
-                    continue
-
-                # Calculate how long it's been escalated
-                minutes_escalated = minutes_since(incident['t_escalated'])
-
-                # Build and send reminder
-                reminder_text = self.message_builder.build_escalation_reminder(
-                    incident_id,
-                    minutes_escalated,
-                    manager_handles
-                )
-
-                # Send as reply to the pinned message
-                await self.bot.send_message(
-                    chat_id=incident['group_id'],
-                    text=reminder_text,
-                    reply_to_message_id=incident['pinned_message_id']
-                )
-
-                # Mark as reminded
-                self._escalation_reminded.add(incident_id)
-                logger.info(f"Sent escalation reminder for {incident_id}")
-
-            except TelegramError as e:
-                logger.error(f"Error sending escalation reminder for {incident_id}: {e}")
-                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="escalation")
-            except Exception as e:
-                logger.error(f"Unexpected error processing escalated incident {incident_id}: {e}")
-                SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="escalation")
 
     async def _check_summary_timeouts(self):
         """Auto-close incidents that have waited too long for a summary."""
@@ -250,8 +194,7 @@ class ReminderService:
 
     def clear_reminder_for_incident(self, incident_id: str):
         """Clear reminder flags when an incident is claimed/resolved."""
-        self._unclaimed_reminded.discard(incident_id)
-        self._escalation_reminded.discard(incident_id)
+        self._unclaimed_reminded.pop(incident_id, None)
 
     def cleanup_old_reminders(self, max_age_hours: int = 24):
         """
@@ -268,7 +211,3 @@ class ReminderService:
         if len(self._unclaimed_reminded) > 1000:
             logger.info("Clearing unclaimed reminder cache (size limit reached)")
             self._unclaimed_reminded.clear()
-
-        if len(self._escalation_reminded) > 1000:
-            logger.info("Clearing escalation reminder cache (size limit reached)")
-            self._escalation_reminded.clear()

@@ -74,8 +74,8 @@ All exceptions are automatically captured with:
 Critical database operations are automatically instrumented:
 - `create_incident` - Track incident creation performance
 - `get_incident` - Monitor query performance
-- `claim_tier1` / `claim_tier2` - Track claim operations
-- `escalate_incident` - Monitor escalation performance
+- `assign_incident_department` - Monitor department selection/transfer
+- `claim_incident` - Track claim operations
 - `resolve_incident` - Track resolution operations
 
 ### 3. User Context
@@ -92,9 +92,8 @@ Every user interaction is tracked with:
 
 Sentry captures breadcrumbs for:
 - Incident creation
-- Tier 1 claims
-- Tier 2 claims
-- Escalations
+- Department assignments/changes
+- Claims and releases
 - Resolutions
 - Callback button clicks
 - Command executions

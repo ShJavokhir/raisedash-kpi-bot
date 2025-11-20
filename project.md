@@ -1,38 +1,38 @@
 # RaiseDash KPI Bot
 
 ## Overview
-Enterprise-grade Telegram incident management bot for operational teams. Provides structured workflow for reporting, triaging, escalating, and resolving incidents through Telegram group chats with button-based interactions.
+Enterprise-grade Telegram incident management bot for operational teams. Provides a structured workflow for reporting, routing by department, and resolving incidents through Telegram group chats with button-based interactions.
 
 ## Core Purpose
-Enable logistics/operations teams to manage incidents efficiently with a two-tier support system (Dispatchers → Operations Managers) while preventing race conditions and ensuring accountability.
+Enable logistics/operations teams to manage incidents efficiently with department-based ownership while preventing race conditions and ensuring accountability.
 
 ## Key Features
 
 ### Incident Management
-- **Two-Tier System**: Tier 1 (Dispatchers) handle standard issues, Tier 2 (Ops Managers) handle escalations
-- **Interactive Workflow**: Button-based interface (Claim → Work → Escalate/Resolve)
-- **Unique Incident IDs**: Simple sequential IDs (0001, 0002...) for tracking
-- **Message Pinning**: Auto-pin active incidents, unpin when resolved
+- **Department Model**: Incidents are assigned to departments; any member can claim and resolve.
+- **Interactive Workflow**: Button-based interface (Choose Department → Claim → Resolve / Change Department).
+- **Unique Incident IDs**: Simple sequential IDs (0001, 0002...) for tracking.
+- **Message Pinning**: Auto-pin active incidents, unpin when resolved.
 
 ### Safety & Reliability
-- **Race Condition Protection**: Atomic database operations prevent multiple claims
-- **Per-Group Isolation**: Independent configurations per Telegram group
-- **Role-Based Access**: Driver, Dispatcher, OpsManager authorization
-- **Persistent Storage**: SQLite with WAL mode for concurrency
+- **Race Condition Protection**: Atomic database operations prevent conflicting claims.
+- **Per-Group Isolation**: Independent configurations per Telegram group.
+- **Role-Based Access**: Driver opt-in plus department membership authorization.
+- **Persistent Storage**: SQLite with WAL mode for concurrency.
 
 ### Automation
-- **SLA Reminders**: Background task monitors unclaimed incidents (10 min) and escalations (15 min)
-- **Auto-Registration**: Users auto-registered on first claim for convenience
-- **State Management**: Enforced state machine with 6 incident states
+- **SLA Reminders**: Background task monitors unclaimed incidents and summary timeouts.
+- **Auto-Registration**: Users auto-registered on first claim for convenience.
+- **State Management**: Enforced state machine with department assignments and summary capture.
 
 ## Incident Lifecycle
 
-1. **Unclaimed** → Driver creates incident with `/new_issue <description>`
-2. **Claimed_T1** → Dispatcher claims and works on it
-3. **Escalated_Unclaimed_T2** → If complex, escalate to managers
-4. **Claimed_T2** → Manager claims escalation
-5. **Awaiting_Summary** → User clicks Resolve, provides summary
-6. **Resolved** → Incident closed with resolution notes
+1. **Awaiting_Department** → User replies to an issue message with `/new_issue`.
+2. **Awaiting_Claim** → Reporter chooses a department; members are notified and SLA timer starts.
+3. **In_Progress** → Department member(s) claim and work the issue.
+4. **Change Department** → Current department can transfer the issue to another department.
+5. **Awaiting_Summary** → Claimer clicks Resolve and submits a summary.
+6. **Resolved/Closed** → Incident closed with resolution notes or auto-closed on timeout.
 
 ## Tech Stack
 
@@ -54,15 +54,18 @@ config.py              # Configuration management
 
 ## Database Schema
 
-- **Groups**: group_id, manager_user_ids, dispatcher_user_ids
+- **Groups**: group_id, manager_user_ids, dispatcher_user_ids (legacy compatibility)
 - **Users**: user_id, telegram_handle, team_role
-- **Incidents**: incident_id, status, timestamps, claimer IDs, descriptions
+- **Departments**: company_id, name, metadata
+- **Department Members**: department_id ⇄ user_id relationships
+- **Incidents**: incident_id, status, department assignment, timestamps, descriptions
 
 ## Commands
 
-- `/new_issue <description>` - Create incident
-- `/configure_managers @user1 @user2` - Set managers (admin only)
-- `/add_dispatcher @user` - Add dispatcher (admin only)
+- `/new_issue` - Reply to an issue message to create an incident
+- `/add_department <name>` - Create a department (admin only)
+- `/add_department_member <department_id> <@user>` - Add a member to a department (admin only)
+- `/list_departments` - Show configured departments for the company
 - `/register_driver` - Self-register as driver
 - `/start` or `/help` - Show help
 
@@ -71,7 +74,7 @@ config.py              # Configuration management
 - `TELEGRAM_BOT_TOKEN` - Bot token (required)
 - `DATABASE_PATH` - DB location (default: incidents.db)
 - `SLA_UNCLAIMED_NUDGE_MINUTES` - Unclaimed reminder (default: 10)
-- `SLA_ESCALATION_NUDGE_MINUTES` - Escalation reminder (default: 15)
+- `SLA_SUMMARY_TIMEOUT_MINUTES` - Resolution summary timeout (default: 10)
 - `REMINDER_CHECK_INTERVAL_MINUTES` - Check frequency (default: 5)
 - `LOG_LEVEL` - Logging level (default: INFO)
 

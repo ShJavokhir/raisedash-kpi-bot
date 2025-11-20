@@ -82,10 +82,10 @@ class IncidentBot:
         app.add_handler(CommandHandler("start", self.bot_handlers.start_command))
         app.add_handler(CommandHandler("help", self.bot_handlers.start_command))  # Alias for /start
         app.add_handler(CommandHandler("report", self.bot_handlers.report_command))
-        app.add_handler(CommandHandler("configure_managers", self.bot_handlers.configure_managers_command))
-        app.add_handler(CommandHandler("add_dispatcher", self.bot_handlers.add_dispatcher_command))
-        app.add_handler(CommandHandler("add_manager", self.bot_handlers.add_manager_command))
         app.add_handler(CommandHandler("add_group", self.bot_handlers.add_group_command))
+        app.add_handler(CommandHandler("add_department", self.bot_handlers.add_department_command))
+        app.add_handler(CommandHandler("list_departments", self.bot_handlers.list_departments_command))
+        app.add_handler(CommandHandler("add_department_member", self.bot_handlers.add_department_member_command))
         app.add_handler(CommandHandler("new_issue", self.bot_handlers.new_issue_command))
 
         # Chat member updates (bot invited/removed)
