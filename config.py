@@ -41,6 +41,12 @@ class Config:
     # Logging
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
+    # Sentry Configuration
+    SENTRY_DSN = os.getenv('SENTRY_DSN')  # Optional, if not set Sentry won't initialize
+    SENTRY_ENVIRONMENT = os.getenv('SENTRY_ENVIRONMENT', 'production')
+    SENTRY_TRACES_SAMPLE_RATE = float(os.getenv('SENTRY_TRACES_SAMPLE_RATE', '0.1'))
+    SENTRY_PROFILES_SAMPLE_RATE = float(os.getenv('SENTRY_PROFILES_SAMPLE_RATE', '0.1'))
+
     @classmethod
     def validate(cls):
         """Validate that required configuration is present."""
