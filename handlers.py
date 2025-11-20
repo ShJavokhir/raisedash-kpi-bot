@@ -14,6 +14,7 @@ from message_builder import MessageBuilder
 from config import Config
 from reporting import KPIReportGenerator, html_to_bytes
 from sentry_config import SentryConfig
+from logging_config import set_log_context, clear_log_context, LogContext
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,33 @@ class BotHandlers:
             Config.get_sla_escalation_seconds(),
             Config.get_summary_timeout_seconds()
         )
+        logger.info("BotHandlers initialized")
+
+    def _log_command_entry(self, command: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Log entry into a command handler with full context."""
+        user = update.effective_user
+        chat = update.effective_chat
+        args = context.args or []
+
+        with LogContext(
+            chat_id=chat.id if chat else None,
+            user_id=user.id if user else None,
+            username=user.username if user else None
+        ):
+            logger.info(f"Command: /{command} | Args: {args} | "
+                       f"ChatType: {chat.type if chat else 'unknown'}")
+
+    def _log_callback_entry(self, callback_data: str, update: Update):
+        """Log entry into a callback handler with full context."""
+        user = update.effective_user
+        chat = update.effective_chat
+
+        with LogContext(
+            chat_id=chat.id if chat else None,
+            user_id=user.id if user else None,
+            username=user.username if user else None
+        ):
+            logger.info(f"Callback: {callback_data}")
 
     def _get_user_handle(self, user) -> str:
         """Get user's handle with @ prefix."""
@@ -441,6 +469,8 @@ class BotHandlers:
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start and /help commands."""
+        self._log_command_entry("start", update, context)
+
         welcome_message = (
             "👋 Welcome to the Raisedash KPI Bot!\n\n"
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
@@ -459,17 +489,24 @@ class BotHandlers:
             "Start by adding at least one department with /add_department."
         )
         await update.message.reply_text(welcome_message)
+        logger.info("Sent welcome message")
 
     async def report_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /report <company_id> <day|week|month> (platform admins only)."""
+        self._log_command_entry("report", update, context)
+
         user = update.effective_user
         args = context.args or []
 
         if not self._is_platform_admin(user.id if user else None):
+            logger.warning(f"Permission denied: User {user.id if user else 'unknown'} is not a platform admin")
             await self._send_error_message(update, "Only platform admins can generate reports.")
             return
 
+        logger.info(f"Platform admin access granted")
+
         if len(args) < 2 or not self._is_int_argument(args[0]):
+            logger.warning(f"Invalid arguments for report command: {args}")
             await self._send_error_message(
                 update,
                 "Usage: /report <company_id> <day|week|month>"
@@ -478,14 +515,21 @@ class BotHandlers:
 
         company_id = int(args[0])
         period = args[1].lower()
+
+        logger.info(f"Generating report for companyId={company_id}, period={period}")
+
         if period not in ("day", "week", "month"):
+            logger.warning(f"Invalid period: {period}")
             await self._send_error_message(update, "Period must be one of: day, week, month.")
             return
 
         company = self.db.get_company_by_id(company_id)
         if not company:
+            logger.error(f"Company {company_id} not found")
             await self._send_error_message(update, f"Company {company_id} does not exist.")
             return
+
+        logger.info(f"Building report for company: {company['name']}")
 
         await update.effective_message.reply_text(
             f"⏳ Building KPI report for {company['name']} ({period})..."
@@ -493,6 +537,7 @@ class BotHandlers:
 
         try:
             report_data, html = self.report_generator.build_report(company, period)
+            logger.info(f"Report generated successfully: {len(html)} bytes")
         except Exception as exc:
             logger.error(f"Failed to build report for company {company_id}: {exc}", exc_info=True)
             await self._send_error_message(update, "Failed to generate report. Please try again.")
@@ -511,6 +556,7 @@ class BotHandlers:
                 f"{period})"
             )
         )
+        logger.info(f"Report delivered: {filename}")
 
     async def configure_managers_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /configure_managers command."""
@@ -985,19 +1031,26 @@ class BotHandlers:
 
     async def new_issue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new_issue command - creates a new incident."""
+        self._log_command_entry("new_issue", update, context)
+
         if not self._is_group_chat(update.effective_chat):
+            logger.warning("new_issue command used outside of group chat")
             await self._send_error_message(update, "This command only works in groups.")
             return
 
         user = update.effective_user
         chat = update.effective_chat
 
+        logger.info(f"Creating new incident in group {chat.id}")
+
         membership = await self._require_active_group(update, context)
         if not membership:
+            logger.warning("Group membership check failed")
             return
 
         group_info = membership['group']
         company_id = group_info.get('company_id')
+        logger.info(f"Group is active, companyId={company_id}")
 
         # Require the command to be a reply to the issue description
         origin_message = update.message.reply_to_message if update.message else None
@@ -1005,6 +1058,7 @@ class BotHandlers:
             or (origin_message.caption if origin_message and origin_message.caption else None)
 
         if not origin_message or not description:
+            logger.warning("No reply message or description found")
             await self._send_error_message(
                 update,
                 "Please reply to the message describing the issue and run /new_issue from that reply."
@@ -1014,6 +1068,7 @@ class BotHandlers:
         description = description.strip()
         MAX_DESCRIPTION_LENGTH = 3000
         if len(description) > MAX_DESCRIPTION_LENGTH:
+            logger.warning(f"Description too long: {len(description)} characters")
             await self._send_error_message(
                 update,
                 f"Description too long. Maximum {MAX_DESCRIPTION_LENGTH} characters allowed."
@@ -1021,20 +1076,26 @@ class BotHandlers:
             return
 
         if len(description) < 5:
+            logger.warning(f"Description too short: {len(description)} characters")
             await self._send_error_message(
                 update,
                 "Description too short. Please provide more details (at least 5 characters)."
             )
             return
 
+        logger.debug(f"Description length: {len(description)} characters")
+
         departments = self.db.list_company_departments(company_id) if company_id else []
         if not departments:
+            logger.error(f"No departments configured for companyId={company_id}")
             await self._send_error_message(
                 update,
                 "No departments are configured for this company yet. "
                 "Ask an admin to run /add_department first."
             )
             return
+
+        logger.info(f"Found {len(departments)} departments for company")
 
         # Track user creating the incident (captures comprehensive user data)
         self._track_user_interaction(user, group_id=chat.id)
@@ -1054,6 +1115,7 @@ class BotHandlers:
         )
 
         # Create incident in database (without message_id first)
+        logger.info(f"Creating incident in database for user={user_handle}, companyId={company_id}")
         incident_id = self.db.create_incident(
             group_id=chat.id,
             created_by_id=user.id,
@@ -1062,6 +1124,7 @@ class BotHandlers:
             company_id=company_id,
             source_message_id=origin_message.message_id
         )
+        logger.info(f"Incident created with incidentId={incident_id}")
 
         # Set incident context for Sentry
         SentryConfig.set_tag("incident_id", incident_id)
@@ -1115,44 +1178,53 @@ class BotHandlers:
         user = update.effective_user
         chat = update.effective_chat
 
+        self._log_callback_entry(callback_data, update)
+
         # Track user interaction (capture all users clicking buttons)
         if user:
             group_id = chat.id if chat and self._is_group_chat(chat) else None
             self._track_user_interaction(user, group_id=group_id)
 
-        logger.info(f"Callback: {callback_data} from user {user.id} in chat {chat.id}")
-
         try:
             membership = await self._require_active_group(update, context, chat)
             if not membership:
+                logger.warning("Group membership check failed for callback")
                 return
 
             parts = callback_data.split(':')
             action = parts[0]
+            logger.debug(f"Callback action: {action}, parts: {parts}")
 
             if action == 'select_department' and len(parts) == 3:
                 incident_id, department_id = parts[1], int(parts[2])
+                logger.info(f"Routing to select_department: incidentId={incident_id}, departmentId={department_id}")
                 await self._handle_select_department(query, user, chat, context, incident_id, department_id)
             elif action == 'reassign_department' and len(parts) == 3:
                 incident_id, department_id = parts[1], int(parts[2])
+                logger.info(f"Routing to reassign_department: incidentId={incident_id}, departmentId={department_id}")
                 await self._handle_reassign_department(query, user, chat, context, incident_id, department_id)
             elif action == 'change_department' and len(parts) == 2:
                 incident_id = parts[1]
+                logger.info(f"Routing to change_department: incidentId={incident_id}")
                 await self._handle_change_department(query, user, chat, incident_id, membership)
             elif action == 'claim' and len(parts) == 2:
                 incident_id = parts[1]
+                logger.info(f"Routing to claim: incidentId={incident_id}")
                 await self._handle_claim(query, user, chat, incident_id)
             elif action == 'release' and len(parts) == 2:
                 incident_id = parts[1]
+                logger.info(f"Routing to release: incidentId={incident_id}")
                 await self._handle_release(query, user, chat, incident_id)
             elif action == 'resolve' and len(parts) == 2:
                 incident_id = parts[1]
+                logger.info(f"Routing to resolve: incidentId={incident_id}")
                 await self._handle_resolve(query, user, chat, incident_id, context)
             else:
+                logger.warning(f"Unknown callback action: {action}")
                 await query.answer("Unknown action", show_alert=True)
 
-        except ValueError:
-            logger.error(f"Invalid callback data format: {callback_data}")
+        except ValueError as e:
+            logger.error(f"Invalid callback data format: {callback_data}, error: {e}")
             await query.answer("Invalid button data", show_alert=True)
 
         except Exception as e:
@@ -1163,36 +1235,48 @@ class BotHandlers:
     async def _handle_select_department(self, query, user, chat, context: ContextTypes.DEFAULT_TYPE,
                                         incident_id: str, department_id: int):
         """Handle initial department selection by the ticket creator."""
-        incident = self.db.get_incident(incident_id)
-        if not incident:
-            await query.answer("Incident not found.", show_alert=True)
-            return
+        with LogContext(incident_id=incident_id, department_id=department_id):
+            logger.info(f"Handling department selection")
 
-        if incident['created_by_id'] != user.id:
-            await query.answer("Only the reporter can choose the department.", show_alert=True)
-            return
+            incident = self.db.get_incident(incident_id)
+            if not incident:
+                logger.error(f"Incident not found")
+                await query.answer("Incident not found.", show_alert=True)
+                return
 
-        success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
-        if not success:
-            await query.answer(message, show_alert=True)
-            return
+            if incident['created_by_id'] != user.id:
+                logger.warning(f"Permission denied: User {user.id} is not the reporter (reporter: {incident['created_by_id']})")
+                await query.answer("Only the reporter can choose the department.", show_alert=True)
+                return
 
-        updated_incident = self.db.get_incident(incident_id)
-        department = self.db.get_department(department_id)
-        department_name = department['name'] if department else "Department"
-        text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
+            logger.info(f"Assigning incident to department")
+            success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
+            if not success:
+                logger.error(f"Failed to assign department: {message}")
+                await query.answer(message, show_alert=True)
+                return
 
-        await query.edit_message_text(text, reply_markup=keyboard)
-        await query.answer("Department selected")
+            logger.info(f"Department assigned successfully, state transition: Awaiting_Department -> Awaiting_Claim")
 
-        handles = self.db.get_department_handles(department_id)
-        if handles:
-            ping = self.message_builder.build_department_ping(handles, incident_id)
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text=ping,
-                reply_to_message_id=query.message.message_id
-            )
+            updated_incident = self.db.get_incident(incident_id)
+            department = self.db.get_department(department_id)
+            department_name = department['name'] if department else "Department"
+            text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
+
+            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.answer("Department selected")
+
+            handles = self.db.get_department_handles(department_id)
+            if handles:
+                logger.info(f"Pinging {len(handles)} department members")
+                ping = self.message_builder.build_department_ping(handles, incident_id)
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=ping,
+                    reply_to_message_id=query.message.message_id
+                )
+            else:
+                logger.warning(f"No department members to ping")
 
     async def _handle_change_department(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Prompt department change options."""
@@ -1258,103 +1342,138 @@ class BotHandlers:
 
     async def _handle_claim(self, query, user, chat, incident_id: str):
         """Handle claim button."""
-        incident = self.db.get_incident(incident_id)
-        if not incident:
-            await query.answer("Incident not found.", show_alert=True)
-            return
+        with LogContext(incident_id=incident_id):
+            logger.info(f"Handling incident claim")
 
-        dept_id = incident.get('department_id')
-        if not dept_id:
-            await query.answer("Please choose a department first.", show_alert=True)
-            return
-
-        if not self.db.is_user_in_department(dept_id, user.id):
-            await query.answer("You are not a member of this department.", show_alert=True)
-            return
-
-        success, message = self.db.claim_incident(incident_id, user.id)
-        if not success:
-            await query.answer(message, show_alert=True)
-            return
-
-        incident = self.db.get_incident(incident_id)
-        claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id)
-        department = self.db.get_department(dept_id)
-        dept_name = department['name'] if department else "Department"
-        text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
-
-        try:
-            await query.edit_message_text(text, reply_markup=keyboard)
-            await query.answer("Incident claimed successfully!")
-        except TelegramError as e:
-            logger.error(f"Error editing message for {incident_id}: {e}")
-            await query.answer("Claimed, but couldn't update message. Please refresh.", show_alert=True)
-
-    async def _handle_release(self, query, user, chat, incident_id: str):
-        """Handle leave claim button."""
-        success, message = self.db.release_claim(incident_id, user.id)
-
-        if success:
             incident = self.db.get_incident(incident_id)
             if not incident:
-                await query.answer("Incident not found. Please refresh.", show_alert=True)
+                logger.error(f"Incident not found")
+                await query.answer("Incident not found.", show_alert=True)
                 return
 
             dept_id = incident.get('department_id')
-            department = self.db.get_department(dept_id) if dept_id else None
-            dept_name = department['name'] if department else "Department"
-            claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id) if dept_id else []
+            if not dept_id:
+                logger.warning(f"Incident has no department assigned")
+                await query.answer("Please choose a department first.", show_alert=True)
+                return
 
-            if incident['status'] == 'In_Progress' and claimer_handles:
-                text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
-            else:
-                text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
+            logger.debug(f"Checking department membership: departmentId={dept_id}, userId={user.id}")
+            if not self.db.is_user_in_department(dept_id, user.id):
+                logger.warning(f"User {user.id} is not a member of department {dept_id}")
+                await query.answer("You are not a member of this department.", show_alert=True)
+                return
+
+            logger.info(f"Claiming incident for user {user.id} ({self._get_user_handle(user)})")
+            success, message = self.db.claim_incident(incident_id, user.id)
+            if not success:
+                logger.error(f"Failed to claim incident: {message}")
+                await query.answer(message, show_alert=True)
+                return
+
+            logger.info(f"Incident claimed successfully, state transition: Awaiting_Claim -> In_Progress")
+
+            incident = self.db.get_incident(incident_id)
+            claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id)
+            logger.info(f"Active claimers: {claimer_handles}")
+
+            department = self.db.get_department(dept_id)
+            dept_name = department['name'] if department else "Department"
+            text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
 
             try:
                 await query.edit_message_text(text, reply_markup=keyboard)
-                await query.answer("Claim released")
+                await query.answer("Incident claimed successfully!")
+                logger.info(f"Message updated successfully")
             except TelegramError as e:
                 logger.error(f"Error editing message for {incident_id}: {e}")
-                await query.answer("Released, but couldn't update message.", show_alert=True)
-        else:
-            await query.answer(message, show_alert=True)
+                await query.answer("Claimed, but couldn't update message. Please refresh.", show_alert=True)
+
+    async def _handle_release(self, query, user, chat, incident_id: str):
+        """Handle leave claim button."""
+        with LogContext(incident_id=incident_id):
+            logger.info(f"Handling claim release for user {user.id} ({self._get_user_handle(user)})")
+
+            success, message = self.db.release_claim(incident_id, user.id)
+
+            if success:
+                logger.info(f"Claim released successfully, state transition: In_Progress -> Awaiting_Claim (if no claimers left)")
+
+                incident = self.db.get_incident(incident_id)
+                if not incident:
+                    logger.error(f"Incident not found after release")
+                    await query.answer("Incident not found. Please refresh.", show_alert=True)
+                    return
+
+                dept_id = incident.get('department_id')
+                department = self.db.get_department(dept_id) if dept_id else None
+                dept_name = department['name'] if department else "Department"
+                claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id) if dept_id else []
+
+                logger.info(f"Remaining claimers: {claimer_handles}")
+
+                if incident['status'] == 'In_Progress' and claimer_handles:
+                    logger.debug(f"Incident still has claimers, keeping In_Progress state")
+                    text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
+                else:
+                    logger.debug(f"No claimers left, reverting to Awaiting_Claim state")
+                    text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
+
+                try:
+                    await query.edit_message_text(text, reply_markup=keyboard)
+                    await query.answer("Claim released")
+                    logger.info(f"Message updated successfully")
+                except TelegramError as e:
+                    logger.error(f"Error editing message for {incident_id}: {e}")
+                    await query.answer("Released, but couldn't update message.", show_alert=True)
+            else:
+                logger.error(f"Failed to release claim: {message}")
+                await query.answer(message, show_alert=True)
 
     async def _handle_resolve(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
         """Handle resolve button."""
-        success, message = self.db.request_resolution(incident_id, user.id)
+        with LogContext(incident_id=incident_id):
+            logger.info(f"Handling resolution request for user {user.id} ({self._get_user_handle(user)})")
 
-        if success:
-            incident = self.db.get_incident(incident_id)
-            user_handle = self._get_user_handle(user)
-            text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
+            success, message = self.db.request_resolution(incident_id, user.id)
 
-            await query.edit_message_text(text)
+            if success:
+                logger.info(f"Resolution requested successfully, state transition: In_Progress -> Awaiting_Summary")
 
-            request_message = self.message_builder.build_resolution_request(
-                incident_id,
-                user_handle
-            )
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text=request_message,
-                reply_to_message_id=query.message.message_id
-            )
+                incident = self.db.get_incident(incident_id)
+                user_handle = self._get_user_handle(user)
+                text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
 
-            await query.answer("Please reply to the bot's message with your summary")
-        else:
-            await query.answer(message, show_alert=True)
+                await query.edit_message_text(text)
+                logger.debug(f"Updated incident message to Awaiting_Summary state")
+
+                request_message = self.message_builder.build_resolution_request(
+                    incident_id,
+                    user_handle
+                )
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=request_message,
+                    reply_to_message_id=query.message.message_id
+                )
+                logger.info(f"Sent resolution summary request message")
+
+                await query.answer("Please reply to the bot's message with your summary")
+            else:
+                logger.error(f"Failed to request resolution: {message}")
+                await query.answer(message, show_alert=True)
 
     # ==================== Message Handler for Resolution Summary ====================
 
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle regular messages (specifically for resolution summaries)."""
         message = update.message
+        user = message.from_user if message else None
+        chat = message.chat if message else None
 
         # Track user interaction (capture all users sending messages)
-        if message and message.from_user:
-            chat = message.chat
+        if message and user:
             group_id = chat.id if chat and self._is_group_chat(chat) else None
-            self._track_user_interaction(message.from_user, group_id=group_id)
+            self._track_user_interaction(user, group_id=group_id)
 
         # Only process replies
         if not message.reply_to_message:
@@ -1365,13 +1484,15 @@ class BotHandlers:
         if not bot_user_id or message.reply_to_message.from_user.id != bot_user_id:
             return
 
-        chat = message.chat
+        logger.debug(f"Processing message reply from user {user.id if user else 'unknown'} in chat {chat.id if chat else 'unknown'}")
+
         group = self.db.get_group(chat.id) if chat and self._is_group_chat(chat) else None
 
         # Registration replies take precedence for pending groups
         if group and group.get('status') != 'active':
             registration_message_id = group.get('registration_message_id')
             if registration_message_id and registration_message_id == message.reply_to_message.message_id:
+                logger.info(f"Processing registration reply for group {chat.id}")
                 await self._handle_registration_reply(message, context, group)
                 return
 
@@ -1379,6 +1500,8 @@ class BotHandlers:
         bot_message_text = message.reply_to_message.text
         if not bot_message_text or "resolution summary" not in bot_message_text.lower():
             return
+
+        logger.info(f"Processing resolution summary from user {user.id if user else 'unknown'}")
 
         # Extract incident_id from the bot's message
         incident_id = None
@@ -1395,60 +1518,72 @@ class BotHandlers:
                 incident_id = match.group(1)
 
         if not incident_id:
-            logger.warning(f"Could not extract incident_id from bot message: {bot_message_text}")
+            logger.warning(f"Could not extract incident_id from bot message")
             return
 
-        # Get the incident
-        incident = self.db.get_incident(incident_id)
-        if not incident:
-            await message.reply_text(f"❌ Incident {incident_id} not found.")
-            return
+        with LogContext(incident_id=incident_id):
+            logger.info(f"Extracted incidentId from message: {incident_id}")
 
-        # Verify status and user authorization
-        if incident['status'] != 'Awaiting_Summary':
-            await message.reply_text(f"❌ Incident {incident_id} is not awaiting a summary.")
-            return
+            # Get the incident
+            incident = self.db.get_incident(incident_id)
+            if not incident:
+                logger.error(f"Incident not found")
+                await message.reply_text(f"❌ Incident {incident_id} not found.")
+                return
 
-        user = update.effective_user
-        if incident['pending_resolution_by_user_id'] != user.id:
-            await message.reply_text(
-                f"❌ You are not authorized to resolve this incident. "
-                f"It's waiting for a summary from another user."
-            )
-            return
+            # Verify status and user authorization
+            if incident['status'] != 'Awaiting_Summary':
+                logger.warning(f"Incident status is {incident['status']}, not Awaiting_Summary")
+                await message.reply_text(f"❌ Incident {incident_id} is not awaiting a summary.")
+                return
 
-        # Get the resolution summary
-        resolution_summary = message.text
+            if incident['pending_resolution_by_user_id'] != user.id:
+                logger.warning(f"User {user.id} not authorized to resolve (pending user: {incident['pending_resolution_by_user_id']})")
+                await message.reply_text(
+                    f"❌ You are not authorized to resolve this incident. "
+                    f"It's waiting for a summary from another user."
+                )
+                return
 
-        # Mark as resolved
-        success, msg = self.db.resolve_incident(incident_id, user.id, resolution_summary)
+            # Get the resolution summary
+            resolution_summary = message.text
+            logger.info(f"Received resolution summary ({len(resolution_summary)} chars)")
+
+            # Mark as resolved
+            logger.info(f"Resolving incident with summary")
+            success, msg = self.db.resolve_incident(incident_id, user.id, resolution_summary)
 
         if success:
-            # Update the pinned message
-            incident = self.db.get_incident(incident_id)
-            user_handle = self._get_user_handle(user)
-            text, _ = self.message_builder.build_resolved_message(incident, user_handle)
+            with LogContext(incident_id=incident_id):
+                logger.info(f"Incident resolved successfully, state transition: Awaiting_Summary -> Resolved")
 
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=message.chat_id,
-                    message_id=incident['pinned_message_id'],
-                    text=text
-                )
+                # Update the pinned message
+                incident = self.db.get_incident(incident_id)
+                user_handle = self._get_user_handle(user)
+                text, _ = self.message_builder.build_resolved_message(incident, user_handle)
 
-                # Unpin the message
-                await context.bot.unpin_chat_message(
-                    chat_id=message.chat_id,
-                    message_id=incident['pinned_message_id']
-                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=message.chat_id,
+                        message_id=incident['pinned_message_id'],
+                        text=text
+                    )
+                    logger.debug(f"Updated pinned message to Resolved state")
 
-                await message.reply_text(f"✅ {incident_id} has been marked as resolved!")
-                logger.info(f"Resolved incident {incident_id}")
+                    # Unpin the message
+                    await context.bot.unpin_chat_message(
+                        chat_id=message.chat_id,
+                        message_id=incident['pinned_message_id']
+                    )
+                    logger.debug(f"Unpinned resolved incident message")
 
-            except TelegramError as e:
-                logger.error(f"Error updating resolved message: {e}")
-                await message.reply_text(
-                    f"✅ {incident_id} marked as resolved, but couldn't update the pinned message."
-                )
+                    await message.reply_text(f"✅ {incident_id} has been marked as resolved!")
+                    logger.info(f"Incident resolution completed successfully")
+
+                except TelegramError as e:
+                    logger.error(f"Error updating resolved message: {e}")
+                    await message.reply_text(
+                        f"✅ {incident_id} marked as resolved, but couldn't update the pinned message."
+                    )
         else:
             await message.reply_text(f"❌ {msg}")
