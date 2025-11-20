@@ -1705,6 +1705,14 @@ class Database:
             json.dumps(metadata or {})
         ))
 
+    def _get_department_name(self, cursor, department_id: Optional[int]) -> Optional[str]:
+        """Fetch department name within an existing transaction."""
+        if department_id is None:
+            return None
+        cursor.execute("SELECT name FROM departments WHERE department_id = ?", (department_id,))
+        row = cursor.fetchone()
+        return row['name'] if row else None
+
     def _start_participation(self, cursor, incident_id: str, user_id: int,
                              department_id: Optional[int], claimed_at: str):
         """Create or reactivate participant rollup for KPI calculations."""
@@ -1897,6 +1905,10 @@ class Database:
                 if incident.get('company_id') and dept['company_id'] != incident['company_id']:
                     return False, "Department does not belong to this company."
 
+                previous_department_id = incident.get('department_id')
+                previous_department_name = self._get_department_name(cursor, previous_department_id)
+                new_department_name = dept['name']
+
                 now = utc_iso_now()
 
                 active_claims = []
@@ -1934,7 +1946,11 @@ class Database:
                 """, (department_id, now, session_id, incident_id))
 
                 self._record_event(cursor, incident_id, 'department_assigned', assigned_by_user_id, metadata={
-                    'department_id': department_id
+                    'department_id': department_id,
+                    'department_name': new_department_name,
+                    'previous_department_id': previous_department_id,
+                    'previous_department_name': previous_department_name,
+                    'status_before': incident['status']
                 })
                 logger.info(f"Incident {incident_id} assigned to department {department_id}")
                 return True, "Department updated"
@@ -1981,8 +1997,11 @@ class Database:
                 """, (t_claimed, t_claimed, incident_id))
 
                 self._touch_department_session_claim(cursor, incident_id, t_claimed)
+                department_name = self._get_department_name(cursor, incident['department_id'])
                 self._record_event(cursor, incident_id, 'claim', user_id, metadata={
-                    'department_id': incident['department_id']
+                    'department_id': incident['department_id'],
+                    'department_name': department_name,
+                    'is_first_claim': incident['t_first_claimed'] is None
                 })
 
                 logger.info(f"Incident {incident_id} claimed by user {user_id}")
@@ -2044,7 +2063,11 @@ class Database:
                     incident_id,
                     'release',
                     user_id,
-                    metadata={'remaining_active': remaining}
+                    metadata={
+                        'remaining_active': remaining,
+                        'department_id': claim_row['department_id'],
+                        'department_name': self._get_department_name(cursor, claim_row['department_id'])
+                    }
                 )
 
                 logger.info(f"Incident {incident_id} released by user {user_id}")
@@ -2122,7 +2145,7 @@ class Database:
                 t_resolution_requested = utc_iso_now()
 
                 cursor.execute("""
-                    SELECT status FROM incidents WHERE incident_id = ?
+                    SELECT status, department_id FROM incidents WHERE incident_id = ?
                 """, (incident_id,))
                 incident = cursor.fetchone()
 
@@ -2130,6 +2153,7 @@ class Database:
                     return False, "Incident not found."
 
                 status = incident['status']
+                department_id = incident['department_id']
 
                 if status != 'In_Progress':
                     return False, "You cannot resolve this incident right now."
@@ -2151,7 +2175,11 @@ class Database:
                         cursor,
                         incident_id,
                         'resolution_requested',
-                        user_id
+                        user_id,
+                        metadata={
+                            'department_id': department_id,
+                            'department_name': self._get_department_name(cursor, department_id)
+                        }
                     )
                     logger.info(f"Resolution requested for {incident_id} from user {user_id}")
                     return True, "Resolution requested successfully"
@@ -2196,7 +2224,16 @@ class Database:
                     self._close_active_claims(cursor, incident_id, t_resolved)
                     self._finalize_active_participants(cursor, incident_id, user_id, t_resolved)
                     self._end_active_department_session(cursor, incident_id, t_resolved, 'resolved')
-                    self._record_event(cursor, incident_id, 'resolve', user_id)
+                    self._record_event(
+                        cursor,
+                        incident_id,
+                        'resolve',
+                        user_id,
+                        metadata={
+                            'department_id': row['department_id'],
+                            'department_name': self._get_department_name(cursor, row['department_id'])
+                        }
+                    )
                     logger.info(f"Incident {incident_id} resolved by user {user_id}")
                     return True, "Incident resolved successfully"
                 else:
@@ -2211,7 +2248,7 @@ class Database:
                 t_closed = utc_iso_now()
 
                 cursor.execute("""
-                    SELECT status, pending_resolution_by_user_id
+                    SELECT status, pending_resolution_by_user_id, department_id
                     FROM incidents
                     WHERE incident_id = ?
                 """, (incident_id,))
@@ -2247,7 +2284,12 @@ class Database:
                     incident_id,
                     'auto_closed',
                     pending_user_id,
-                    metadata={"reason": reason}
+                    metadata={
+                        "reason": reason,
+                        "pending_user_id": pending_user_id,
+                        "department_id": row['department_id'],
+                        "department_name": self._get_department_name(cursor, row['department_id'])
+                    }
                 )
                 logger.info(f"Incident {incident_id} auto-closed after summary timeout")
                 return True, "Incident auto-closed."
