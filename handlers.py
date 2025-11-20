@@ -1207,6 +1207,10 @@ class BotHandlers:
                 incident_id = parts[1]
                 logger.info(f"Routing to change_department: incidentId={incident_id}")
                 await self._handle_change_department(query, user, chat, incident_id, membership)
+            elif action == 'restore_view' and len(parts) == 2:
+                incident_id = parts[1]
+                logger.info(f"Routing to restore_view: incidentId={incident_id}")
+                await self._handle_restore_view(query, user, incident_id)
             elif action == 'claim' and len(parts) == 2:
                 incident_id = parts[1]
                 logger.info(f"Routing to claim: incidentId={incident_id}")
@@ -1300,10 +1304,49 @@ class BotHandlers:
             incident,
             departments,
             prompt="Select a new department to transfer this issue.",
-            callback_prefix="reassign_department"
+            callback_prefix="reassign_department",
+            back_callback_data=f"restore_view:{incident_id}"
         )
         await query.edit_message_text(text, reply_markup=keyboard)
         await query.answer("Choose new department")
+
+    async def _handle_restore_view(self, query, user, incident_id: str):
+        """Return to the current incident view without changing department."""
+        incident = self.db.get_incident(incident_id)
+        if not incident:
+            await query.answer("Incident not found.", show_alert=True)
+            return
+
+        dept_id = incident.get('department_id')
+        if not dept_id:
+            await query.answer("Department not set yet.", show_alert=True)
+            return
+
+        # Only members of the active department can restore the view
+        if not self.db.is_user_in_department(dept_id, user.id):
+            await query.answer("You are not a member of this department.", show_alert=True)
+            return
+
+        status = incident.get('status')
+        if status not in ('Awaiting_Claim', 'In_Progress'):
+            await query.answer("Incident updated. Please open the latest pinned message.", show_alert=True)
+            return
+
+        department = self.db.get_department(dept_id)
+        dept_name = department['name'] if department else "Department"
+
+        if status == 'In_Progress':
+            claimer_handles = self.db.get_active_claim_handles(incident_id, department_id=dept_id)
+            text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
+        else:
+            text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
+
+        try:
+            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.answer("Back to incident")
+        except TelegramError as e:
+            logger.error(f"Error restoring view for {incident_id}: {e}")
+            await query.answer("Could not restore the incident view.", show_alert=True)
 
     async def _handle_reassign_department(self, query, user, chat, context: ContextTypes.DEFAULT_TYPE,
                                           incident_id: str, department_id: int):

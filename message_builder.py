@@ -14,7 +14,8 @@ class MessageBuilder:
     def build_department_selection(self, incident: Dict[str, Any],
                                    departments: List[Dict[str, Any]],
                                    prompt: str,
-                                   callback_prefix: str) -> tuple[str, InlineKeyboardMarkup]:
+                                   callback_prefix: str,
+                                   back_callback_data: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
         """Build message prompting for department selection."""
         text = (
             "🚨 NEW ISSUE\n"
@@ -29,11 +30,16 @@ class MessageBuilder:
             f"{prompt}"
         )
 
-        buttons = [
+        buttons: List[InlineKeyboardButton] = [
             InlineKeyboardButton(dept['name'], callback_data=f"{callback_prefix}:{incident['incident_id']}:{dept['department_id']}")
             for dept in departments
         ]
-        keyboard = InlineKeyboardMarkup(self._chunk_buttons(buttons, per_row=2))
+        rows = self._chunk_buttons(buttons, per_row=2)
+
+        if back_callback_data:
+            rows.append([InlineKeyboardButton("⬅️ Back", callback_data=back_callback_data)])
+
+        keyboard = InlineKeyboardMarkup(rows)
         return text, keyboard
 
     def build_unclaimed_message(self, incident: Dict[str, Any], department_name: str) -> tuple[str, InlineKeyboardMarkup]:
