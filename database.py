@@ -96,7 +96,8 @@ class Database:
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 telegram_handle TEXT,
-                team_role TEXT CHECK(team_role IN ('Driver', 'Dispatcher', 'OpsManager'))
+                team_role TEXT CHECK(team_role IN ('Driver', 'Dispatcher', 'OpsManager')),
+                metadata TEXT NOT NULL DEFAULT '{}'
             )
         """)
 
@@ -379,6 +380,7 @@ class Database:
         ensure_column('users', 'language_code', "TEXT")
         ensure_column('users', 'is_bot', "INTEGER NOT NULL DEFAULT 0")
         ensure_column('users', 'group_connections', "TEXT NOT NULL DEFAULT '[]'")  # JSON array
+        ensure_column('users', 'metadata', "TEXT NOT NULL DEFAULT '{}'")  # JSON blob for audit changes
         ensure_column('users', 'created_at', "TEXT")
         ensure_column('users', 'updated_at', "TEXT")
 
@@ -1252,8 +1254,8 @@ class Database:
                    language_code: Optional[str] = None, is_bot: bool = False,
                    group_id: Optional[int] = None, team_role: Optional[str] = None):
         """
-        Comprehensive user tracking function.
-        Captures all available Telegram user data and tracks group connections.
+        Comprehensive user tracking function with change detection.
+        Captures all available Telegram user data and only writes when something changed.
 
         Args:
             user_id: Telegram user ID (required)
@@ -1274,63 +1276,94 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
 
-                # Get existing user data
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 existing_row = cursor.fetchone()
 
-                # Prepare telegram_handle (for backward compatibility)
-                telegram_handle = f"@{username}" if username else f"User_{user_id}"
+                # Preserve existing handles when no username is provided
+                existing_handle = existing_row['telegram_handle'] if existing_row else None
+                telegram_handle = (
+                    f"@{username}" if username else existing_handle or f"User_{user_id}"
+                )
 
-                # Determine group_connections
-                group_connections = []
-                if existing_row:
-                    existing_connections = json.loads(existing_row['group_connections'] or '[]')
-                    group_connections = list(set(existing_connections))  # Remove duplicates
+                # Deduplicate and normalize group connections
+                existing_connections = json.loads(existing_row['group_connections'] or '[]') if existing_row else []
+                group_connections = set(existing_connections)
+                if group_id is not None:
+                    group_connections.add(group_id)
+                group_connections_json = json.dumps(sorted(group_connections))
 
-                # Add new group connection if provided
-                if group_id is not None and group_id not in group_connections:
-                    group_connections.append(group_id)
+                # Load metadata for change history
+                metadata = json.loads(existing_row['metadata'] or '{}') if existing_row else {}
+                account_changes = metadata.get('accountChanges', [])
 
-                # Determine final team_role (preserve higher-ranked roles)
-                final_team_role = None
-                if existing_row and existing_row['team_role']:
-                    final_team_role = existing_row['team_role']
+                # Preserve existing role unless a new one is provided
+                final_team_role = existing_row['team_role'] if existing_row and existing_row['team_role'] else None
                 if team_role:
-                    # Only update role if new role is provided and non-null
                     final_team_role = team_role
 
-                # Determine created_at timestamp
                 created_at = existing_row['created_at'] if existing_row and existing_row['created_at'] else timestamp
 
-                # Perform upsert with all fields
-                cursor.execute("""
-                    INSERT INTO users (
+                if not existing_row:
+                    cursor.execute("""
+                        INSERT INTO users (
+                            user_id, telegram_handle, username, first_name, last_name,
+                            language_code, is_bot, team_role, group_connections,
+                            metadata, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
                         user_id, telegram_handle, username, first_name, last_name,
-                        language_code, is_bot, team_role, group_connections,
-                        created_at, updated_at
+                        language_code, 1 if is_bot else 0, final_team_role,
+                        group_connections_json, json.dumps({"accountChanges": []}), created_at, timestamp
+                    ))
+                    logger.info(
+                        f"Tracked user {user_id} ({telegram_handle}) "
+                        f"[first_name={first_name}, last_name={last_name}, "
+                        f"role={final_team_role}, groups={len(group_connections)}]"
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        telegram_handle = excluded.telegram_handle,
-                        username = COALESCE(excluded.username, username),
-                        first_name = COALESCE(excluded.first_name, first_name),
-                        last_name = COALESCE(excluded.last_name, last_name),
-                        language_code = COALESCE(excluded.language_code, language_code),
-                        is_bot = excluded.is_bot,
-                        team_role = COALESCE(excluded.team_role, team_role),
-                        group_connections = excluded.group_connections,
-                        updated_at = excluded.updated_at
-                """, (
-                    user_id, telegram_handle, username, first_name, last_name,
-                    language_code, 1 if is_bot else 0, final_team_role,
-                    json.dumps(group_connections), created_at, timestamp
-                ))
+                else:
+                    changes = {}
+                    change_details = {}
 
-                logger.info(
-                    f"Tracked user {user_id} ({telegram_handle}) "
-                    f"[first_name={first_name}, last_name={last_name}, "
-                    f"role={final_team_role}, groups={len(group_connections)}]"
-                )
+                    def record_change(column: str, new_value):
+                        if new_value is None:
+                            return
+                        if existing_row[column] != new_value:
+                            changes[column] = new_value
+                            change_details[column] = {
+                                "old": existing_row[column],
+                                "new": new_value
+                            }
+
+                    record_change('telegram_handle', telegram_handle)
+                    record_change('username', username or existing_row['username'])
+                    record_change('first_name', first_name or existing_row['first_name'])
+                    record_change('last_name', last_name or existing_row['last_name'])
+                    record_change('language_code', language_code or existing_row['language_code'])
+                    record_change('is_bot', 1 if is_bot else 0)
+                    record_change('team_role', final_team_role or existing_row['team_role'])
+                    record_change('group_connections', group_connections_json)
+                    if not existing_row['created_at']:
+                        changes['created_at'] = created_at
+
+                    if changes:
+                        # Append change audit entry
+                        account_changes.append({
+                            "at": timestamp,
+                            "changes": change_details
+                        })
+                        metadata['accountChanges'] = account_changes[-100:]  # cap history to keep payload bounded
+                        changes['metadata'] = json.dumps(metadata)
+
+                        changes['updated_at'] = timestamp
+                        set_clause = ", ".join(f"{col} = ?" for col in changes.keys())
+                        params = list(changes.values()) + [user_id]
+                        cursor.execute(f"UPDATE users SET {set_clause} WHERE user_id = ?", params)
+                        logger.info(
+                            f"Updated user {user_id} ({telegram_handle}); fields changed: {sorted(changes.keys())}"
+                        )
+                    else:
+                        logger.debug(f"No user field changes detected for {user_id}; skipping update")
 
         # Return updated user data (outside the lock context)
         return self.get_user(user_id)
