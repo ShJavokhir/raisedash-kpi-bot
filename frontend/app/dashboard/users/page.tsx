@@ -33,6 +33,13 @@ export default function UsersPage() {
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
 
+  // Modal states
+  const [showDepartmentsModal, setShowDepartmentsModal] = useState(false);
+  const [showGroupsModal, setShowGroupsModal] = useState(false);
+  const [selectedUserDepts, setSelectedUserDepts] = useState<Department[]>([]);
+  const [selectedUserGroups, setSelectedUserGroups] = useState<{group_id: number, group_name: string}[]>([]);
+  const [modalUserName, setModalUserName] = useState('');
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -104,6 +111,47 @@ export default function UsersPage() {
       return `${user.first_name || ''} ${user.last_name || ''}`.trim();
     }
     return user.username || user.telegram_handle || `User ${user.user_id}`;
+  };
+
+  const openTelegramUser = (username: string | null, userId: number) => {
+    if (username) {
+      window.open(`https://t.me/${username}`, '_blank');
+    } else {
+      // If no username, we can't open their profile directly
+      alert('This user does not have a public Telegram username');
+    }
+  };
+
+  const showUserDepartments = async (user: UserData) => {
+    if (user.department_ids.length === 0) return;
+
+    const userDepts = departments.filter(d => user.department_ids.includes(d.department_id));
+    setSelectedUserDepts(userDepts);
+    setModalUserName(getUserDisplayName(user));
+    setShowDepartmentsModal(true);
+  };
+
+  const showUserGroups = async (user: UserData) => {
+    if (!user.group_connections || user.group_connections.length === 0) return;
+
+    try {
+      // Fetch group details
+      const response = await fetch('/api/groups');
+      if (response.ok) {
+        const data = await response.json();
+        const userGroups = data.groups.filter((g: any) =>
+          user.group_connections.includes(g.group_id)
+        ).map((g: any) => ({
+          group_id: g.group_id,
+          group_name: g.group_name
+        }));
+        setSelectedUserGroups(userGroups);
+        setModalUserName(getUserDisplayName(user));
+        setShowGroupsModal(true);
+      }
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+    }
   };
 
   const uniqueRoles = Array.from(new Set(users.map(u => u.team_role).filter(Boolean)));
@@ -275,7 +323,7 @@ export default function UsersPage() {
                         <div className="ml-3">
                           <Link
                             href={`/dashboard/users/${user.user_id}`}
-                            className="text-xs font-medium text-neutral-900 uppercase tracking-wide hover:text-blue-600 hover:underline transition-colors"
+                            className="text-xs font-medium text-neutral-900 uppercase tracking-wide underline hover:text-neutral-600 transition-colors"
                           >
                             {getUserDisplayName(user)}
                           </Link>
@@ -284,7 +332,14 @@ export default function UsersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-600 font-mono">
-                      {user.username || '—'}
+                      {user.username ? (
+                        <button
+                          onClick={() => openTelegramUser(user.username, user.user_id)}
+                          className="underline hover:text-neutral-900 transition-colors"
+                        >
+                          {user.username}
+                        </button>
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="badge">
@@ -292,10 +347,24 @@ export default function UsersPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-500 font-mono">
-                      {user.department_ids.length > 0 ? `${user.department_ids.length} dept(s)` : '—'}
+                      {user.department_ids.length > 0 ? (
+                        <button
+                          onClick={() => showUserDepartments(user)}
+                          className="underline hover:text-neutral-900 transition-colors"
+                        >
+                          {user.department_ids.length} dept(s)
+                        </button>
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-500 font-mono">
-                      {user.group_connections?.length > 0 ? `${user.group_connections.length} group(s)` : '—'}
+                      {user.group_connections?.length > 0 ? (
+                        <button
+                          onClick={() => showUserGroups(user)}
+                          className="underline hover:text-neutral-900 transition-colors"
+                        >
+                          {user.group_connections.length} group(s)
+                        </button>
+                      ) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -304,6 +373,86 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      {/* Departments Modal */}
+      {showDepartmentsModal && (
+        <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50" onClick={() => setShowDepartmentsModal(false)}>
+          <div className="tech-card tech-border bg-white p-6 max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{modalUserName}</h3>
+                <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">DEPARTMENTS ({selectedUserDepts.length})</p>
+              </div>
+              <button
+                onClick={() => setShowDepartmentsModal(false)}
+                className="tech-button p-1"
+                aria-label="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {selectedUserDepts.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-xs uppercase tracking-wider text-neutral-500">No departments found</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {selectedUserDepts.map((dept) => (
+                  <div key={dept.department_id} className="tech-border-b pb-2">
+                    <div className="text-sm text-neutral-900 uppercase tracking-wide">
+                      {dept.name}
+                    </div>
+                    <div className="text-[10px] text-neutral-500 font-mono">
+                      ID: {dept.department_id}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Groups Modal */}
+      {showGroupsModal && (
+        <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50" onClick={() => setShowGroupsModal(false)}>
+          <div className="tech-card tech-border bg-white p-6 max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{modalUserName}</h3>
+                <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">GROUPS ({selectedUserGroups.length})</p>
+              </div>
+              <button
+                onClick={() => setShowGroupsModal(false)}
+                className="tech-button p-1"
+                aria-label="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {selectedUserGroups.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-xs uppercase tracking-wider text-neutral-500">No groups found</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {selectedUserGroups.map((group) => (
+                  <div key={group.group_id} className="tech-border-b pb-2">
+                    <div className="text-sm text-neutral-900 uppercase tracking-wide">
+                      {group.group_name}
+                    </div>
+                    <div className="text-[10px] text-neutral-500 font-mono">
+                      ID: {group.group_id}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

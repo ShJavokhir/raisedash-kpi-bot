@@ -102,8 +102,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       groupId
     );
 
+    // Create notification for the group
+    const createNotification = db.prepare(`
+      INSERT INTO pending_notifications (group_id, message_type, message_data, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    createNotification.run(
+      groupId,
+      'group_approved',
+      JSON.stringify({
+        group_name: group.group_name,
+        company_name: company.name
+      }),
+      new Date().toISOString()
+    );
+
     // Log audit event
     console.log(`Group ${groupId} (${group.group_name}) approved and attached to company ${company.company_id} (${company.name})`);
+    console.log(`Notification queued for group ${groupId}`);
 
     return NextResponse.json({
       success: true,

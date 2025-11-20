@@ -16,19 +16,29 @@ export async function GET(request: NextRequest) {
       ORDER BY group_name ASC
     `).all(session.companyId) as Group[];
 
-    const formattedGroups = groups.map(group => ({
-      group_id: group.group_id,
-      group_name: group.group_name,
-      manager_handles: parseJSON(group.manager_handles, []),
-      manager_user_ids: parseJSON(group.manager_user_ids, []),
-      dispatcher_user_ids: parseJSON(group.dispatcher_user_ids, []),
-      company_id: group.company_id,
-      status: group.status,
-      registration_message_id: group.registration_message_id,
-      requested_by_user_id: group.requested_by_user_id,
-      requested_by_handle: group.requested_by_handle,
-      requested_company_name: group.requested_company_name,
-    }));
+    const formattedGroups = groups.map(group => {
+      // Count unique users who have created incidents in this group
+      const userCountResult = db.prepare(`
+        SELECT COUNT(DISTINCT created_by_id) as user_count
+        FROM incidents
+        WHERE group_id = ?
+      `).get(group.group_id) as { user_count: number };
+
+      return {
+        group_id: group.group_id,
+        group_name: group.group_name,
+        manager_handles: parseJSON(group.manager_handles, []),
+        manager_user_ids: parseJSON(group.manager_user_ids, []),
+        dispatcher_user_ids: parseJSON(group.dispatcher_user_ids, []),
+        company_id: group.company_id,
+        status: group.status,
+        user_count: userCountResult.user_count || 0,
+        registration_message_id: group.registration_message_id,
+        requested_by_user_id: group.requested_by_user_id,
+        requested_by_handle: group.requested_by_handle,
+        requested_company_name: group.requested_company_name,
+      };
+    });
 
     return NextResponse.json({ groups: formattedGroups });
   } catch (error) {
