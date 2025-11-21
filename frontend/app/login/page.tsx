@@ -82,7 +82,7 @@ export default function LoginPage() {
               <div className="tech-border bg-neutral-100 p-3">
                 <div className="flex items-start gap-2">
                   <div className="w-1 h-1 bg-neutral-900 mt-1.5"></div>
-                  <p className="text-xs text-neutral-900 font-mono uppercase tracking-wide">{error}</p>
+                  <p className="text-xs text-neutral-900 font-mono tracking-wide">{error}</p>
                 </div>
               </div>
             )}

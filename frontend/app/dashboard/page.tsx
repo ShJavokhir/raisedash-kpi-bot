@@ -209,7 +209,7 @@ export default function DashboardPage() {
           <div className="space-y-2">
             {stats.incidentsByDepartment.map((dept) => (
               <div key={dept.department_name || 'Unassigned'} className="flex items-center justify-between py-2 tech-border-b last:border-0">
-                <span className="text-xs uppercase tracking-wider text-neutral-600">{dept.department_name || 'Unassigned'}</span>
+                <span className="text-xs tracking-wider text-neutral-600">{dept.department_name || 'Unassigned'}</span>
                 <div className="flex items-center gap-4">
                   <span className="text-[10px] text-neutral-500 font-mono">{dept.active_count} active</span>
                   <span className="text-xs font-bold text-neutral-900 font-mono">{dept.count}</span>
@@ -228,7 +228,7 @@ export default function DashboardPage() {
               <div key={user.user_id} className="flex items-center justify-between py-2 tech-border-b last:border-0">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-mono text-neutral-400 w-6">#{index + 1}</span>
-                  <span className="text-xs uppercase tracking-wider text-neutral-900">
+                  <span className="text-xs tracking-wider text-neutral-900">
                     {user.first_name || user.username || `User ${user.user_id}`}
                   </span>
                 </div>

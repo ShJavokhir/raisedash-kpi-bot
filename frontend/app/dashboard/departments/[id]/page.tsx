@@ -288,7 +288,7 @@ export default function DepartmentMembersPage() {
                     placeholder="Name, username, or ID..."
                     value={userSearchQuery}
                     onChange={(e) => setUserSearchQuery(e.target.value)}
-                    className="tech-input w-full pl-10 uppercase placeholder:normal-case"
+                    className="tech-input w-full pl-10"
                     autoComplete="off"
                   />
                 </div>

@@ -265,11 +265,11 @@ export default function IncidentDetailPage() {
             <dl className="space-y-3">
               <div className="py-2 tech-border-b">
                 <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Department</dt>
-                <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.department_name || 'Unassigned'}</dd>
+                <dd className="text-xs text-neutral-900 tracking-wide">{incident.department_name || 'Unassigned'}</dd>
               </div>
               <div className="py-2 tech-border-b">
                 <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Group</dt>
-                <dd className="text-xs text-neutral-900 uppercase tracking-wide">{incident.group_name}</dd>
+                <dd className="text-xs text-neutral-900 tracking-wide">{incident.group_name}</dd>
               </div>
               {incident.t_first_claimed && (
                 <div className="py-2 tech-border-b">
@@ -316,12 +316,12 @@ export default function IncidentDetailPage() {
                       <User className="h-3 w-3 text-neutral-400 mr-2" strokeWidth={1} />
                       <Link
                         href={`/dashboard/users/${participant.user_id}`}
-                        className="text-xs text-neutral-900 uppercase tracking-wide underline hover:text-neutral-600 transition-colors"
+                        className="text-xs text-neutral-900 tracking-wide underline hover:text-neutral-600 transition-colors"
                       >
                         {participant.first_name || participant.username || `User ${participant.user_id}`}
                       </Link>
                     </div>
-                    <span className="text-[10px] text-neutral-500 uppercase tracking-wider">{participant.status}</span>
+                    <span className="text-[10px] text-neutral-500 tracking-wider capitalize">{participant.status}</span>
                   </li>
                 ))}
               </ul>
@@ -338,11 +338,11 @@ export default function IncidentDetailPage() {
               <ul className="space-y-2">
                 {claims.filter(c => c.is_active).map((claim) => (
                   <li key={claim.claim_id} className="text-xs text-neutral-900 py-1">
-                    <span className="uppercase tracking-wide">
+                    <span className="tracking-wide">
                       {claim.first_name || claim.username || `User ${claim.user_id}`}
                     </span>
                     {claim.department_name && (
-                      <span className="text-[10px] text-neutral-500 ml-2 uppercase">({claim.department_name})</span>
+                      <span className="text-[10px] text-neutral-500 ml-2">({claim.department_name})</span>
                     )}
                   </li>
                 ))}
