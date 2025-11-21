@@ -157,7 +157,7 @@ export default function JoinRequestsPage() {
       </div>
 
       {/* Stats */}
-      <div className="tech-card p-4 tech-border">
+      <div className="tech-border bg-white p-4">
         <div className="flex items-center gap-3">
           <Users className="w-5 h-5 text-ink" />
           <div>
@@ -169,17 +169,17 @@ export default function JoinRequestsPage() {
 
       {/* Join Requests List */}
       {joinRequests.length === 0 ? (
-        <div className="tech-card p-12 text-center tech-border">
+        <div className="tech-border bg-white p-12 text-center">
           <Users className="w-16 h-16 text-ink/30 mx-auto mb-4" />
           <p className="text-sm uppercase tracking-wider font-medium mb-2">NO PENDING REQUESTS</p>
           <p className="text-xs text-ink/60">
-            THERE ARE CURRENTLY NO GROUPS REQUESTING TO JOIN {companyName.toUpperCase()}.
+            There are currently no groups requesting to join {companyName}.
             <br />
-            WHEN A TELEGRAM GROUP REQUESTS ACCESS, THEY WILL APPEAR HERE FOR APPROVAL.
+            When a Telegram group requests access, they will appear here for approval.
           </p>
         </div>
       ) : (
-        <div className="tech-card tech-border">
+        <div className="tech-border bg-white">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="tech-border-b">
@@ -203,7 +203,7 @@ export default function JoinRequestsPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {joinRequests.map((request) => (
-                  <tr key={request.group_id} className="hover:bg-paper/50 transition-colors">
+                  <tr key={request.group_id} className="hover:bg-neutral-50 transition-colors">
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-3">
                         <div className="flex-shrink-0 h-8 w-8 tech-border flex items-center justify-center">
@@ -279,7 +279,7 @@ export default function JoinRequestsPage() {
       )}
 
       {/* Information Panel */}
-      <div className="tech-card tech-border p-4">
+      <div className="tech-border bg-white p-4">
         <span className="section-tag inline-block mb-3">WORKFLOW GUIDE</span>
         <div className="space-y-2 text-xs">
           <div className="flex gap-3">

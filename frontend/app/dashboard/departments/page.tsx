@@ -135,7 +135,7 @@ export default function DepartmentsPage() {
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900 mb-1">{department.name}</h3>
+                  <h3 className="text-sm font-bold tracking-wider text-neutral-900 mb-1">{department.name}</h3>
                   <p className="text-[10px] text-neutral-500 uppercase tracking-wide font-mono">
                     Created {formatDate(department.created_at)}
                   </p>
@@ -155,7 +155,7 @@ export default function DepartmentsPage() {
                 </div>
                 <a
                   href={`/dashboard/departments/${department.department_id}`}
-                  className="tech-button w-full flex items-center justify-center gap-2 hover:bg-neutral-900 hover:text-white transition-colors"
+                  className="tech-button w-full flex items-center justify-center gap-2 hover:!bg-neutral-900 hover:!text-white transition-colors"
                 >
                   <Users className="h-3 w-3" strokeWidth={1} />
                   <span className="text-[10px] uppercase tracking-wider font-bold">Manage Members</span>
@@ -184,7 +184,7 @@ export default function DepartmentsPage() {
                   required
                   value={newDepartmentName}
                   onChange={(e) => setNewDepartmentName(e.target.value)}
-                  className="tech-input w-full uppercase"
+                  className="tech-input w-full"
                   placeholder="OPERATIONS, SUPPORT, ETC."
                 />
               </div>

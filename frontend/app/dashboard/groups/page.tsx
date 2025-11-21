@@ -122,7 +122,7 @@ export default function GroupsPage() {
                     <MessageSquare className="h-4 w-4 text-neutral-500" strokeWidth={1} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
+                    <h3 className="text-sm font-bold tracking-wider text-neutral-900 flex items-center gap-2">
                       {group.group_name}
                       <ExternalLink className="h-3 w-3 text-neutral-500" strokeWidth={1} />
                     </h3>
@@ -167,7 +167,7 @@ export default function GroupsPage() {
           <div className="tech-card tech-border bg-white p-6 max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{selectedGroup.group_name}</h3>
+                <h3 className="text-sm font-bold tracking-wider text-neutral-900">{selectedGroup.group_name}</h3>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">GROUP USERS ({groupUsers.length})</p>
               </div>
               <button

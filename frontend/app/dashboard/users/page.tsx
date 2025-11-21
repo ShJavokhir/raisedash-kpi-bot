@@ -188,7 +188,7 @@ export default function UsersPage() {
               placeholder="Search by name, username, or handle..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
             />
           </div>
           <button
@@ -323,7 +323,7 @@ export default function UsersPage() {
                         <div className="ml-3">
                           <Link
                             href={`/dashboard/users/${user.user_id}`}
-                            className="text-xs font-medium text-neutral-900 uppercase tracking-wide underline hover:text-neutral-600 transition-colors"
+                            className="text-xs font-medium text-neutral-900 tracking-wide underline hover:text-neutral-600 transition-colors"
                           >
                             {getUserDisplayName(user)}
                           </Link>
@@ -380,7 +380,7 @@ export default function UsersPage() {
           <div className="tech-card tech-border bg-white p-6 max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{modalUserName}</h3>
+                <h3 className="text-sm font-bold tracking-wider text-neutral-900">{modalUserName}</h3>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">DEPARTMENTS ({selectedUserDepts.length})</p>
               </div>
               <button
@@ -400,7 +400,7 @@ export default function UsersPage() {
               <div className="space-y-2">
                 {selectedUserDepts.map((dept) => (
                   <div key={dept.department_id} className="tech-border-b pb-2">
-                    <div className="text-sm text-neutral-900 uppercase tracking-wide">
+                    <div className="text-sm text-neutral-900 tracking-wide">
                       {dept.name}
                     </div>
                     <div className="text-[10px] text-neutral-500 font-mono">
@@ -420,7 +420,7 @@ export default function UsersPage() {
           <div className="tech-card tech-border bg-white p-6 max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">{modalUserName}</h3>
+                <h3 className="text-sm font-bold tracking-wider text-neutral-900">{modalUserName}</h3>
                 <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">GROUPS ({selectedUserGroups.length})</p>
               </div>
               <button
@@ -440,7 +440,7 @@ export default function UsersPage() {
               <div className="space-y-2">
                 {selectedUserGroups.map((group) => (
                   <div key={group.group_id} className="tech-border-b pb-2">
-                    <div className="text-sm text-neutral-900 uppercase tracking-wide">
+                    <div className="text-sm text-neutral-900 tracking-wide">
                       {group.group_name}
                     </div>
                     <div className="text-[10px] text-neutral-500 font-mono">
