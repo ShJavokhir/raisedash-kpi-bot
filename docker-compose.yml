@@ -1,50 +1,257 @@
 version: '3.8'
 
 services:
-  raisedash-bot:
-    build: .
-    container_name: raisedash-kpi-bot
-    restart: unless-stopped
-
-    # Environment configuration
+  landing:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/loadhunter/landing:latest
+    platform: linux/amd64
+    restart: always
     env_file:
-      - .env
+      - landing.env
+    expose:
+      - "3000"  # internal port for landing page
+    networks:
+      - app_network
 
-    # Ports
-    ports:
-      - "3000:3000"
-
-    # Volumes for persistent data
-    volumes:
-      - ./data:/app/data:rw
-      - ./assets:/app/assets:ro
-
-    # Health check
+  dashboard:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/loadhunter-dashboard:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - dashboard.env
+    expose:
+      - "3000"  # internal port (note: not published to host)
+    networks:
+      - app_network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_signal: SIGINT
     healthcheck:
-      test: ["CMD", "python3", "-c", "import sqlite3; sqlite3.connect('${DATABASE_PATH:-/app/data/incidents.db}').execute('SELECT 1').fetchone()"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
 
-    # Resource limits (adjust based on your AWS EC2 instance)
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
+  kpi-bot:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/kpi-bot:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - kpi-bot.env
+    environment:
+      - DATABASE_PATH=/app/data/incidents.db
+    expose:
+      - "3000"
+    volumes:
+      - kpi_bot_data:/app/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-    # Logging
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+  api:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/loadhunter-api:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - api.env
+    environment:
+      - REDIS_HOST=redis
+      - MONGO_URI=mongodb://mongodb:27017/agent
 
-# Optional: For production with external database volume
-# volumes:
-#   raisedash_data:
-#     driver: local
+    expose:
+      - "8080"  # internal port for API
+      - "8001"
+    networks:
+      - app_network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  mongodb:
+    image: mongodb/mongodb-community-server:latest
+    platform: linux/amd64
+    ports:
+      - "27017:27017"  # expose MongoDB port to host
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  redis:
+    image: redis:alpine
+    platform: linux/amd64
+    ports:
+      - "6379:6379"  # expose Redis port to host
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: redis-server --appendonly yes
+
+  nginx:
+    image: nginx:1.24.0-alpine
+    platform: linux/amd64
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d  # Make sure to configure inbound domains here!
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - app_network
+    command: /bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g "daemon off;"'
+
+  small-scripts:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/small-scripts:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - small-scripts.env
+    expose:
+      - "3005"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  soyla-next:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/soyla/next:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - social.env
+    expose:
+      - "3000"  # internal port for Next.js
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  soyla-livekit:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/soyla/livekit:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - social_livekit.env
+    networks:
+      - app_network
+
+  raisedash-training:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/raisedash-training:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - raisedash-training.env
+    expose:
+      - "3000"  # internal port for Next.js
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  raisedash-onboarding:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/raisedash-onboarding:latest
+    platform: linux/amd64
+    restart: always
+    env_file:
+      - raisedash-onboarding.env
+    expose:
+      - "3000"  # internal port for Next.js
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  javokhir:
+    image: 390403864981.dkr.ecr.us-east-1.amazonaws.com/javokhir.com:latest
+    platform: linux/amd64
+    restart: always
+    expose:
+      - "3000"  # internal port for Next.js
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  certbot:
+    image: certbot/certbot:v2.8.0
+    platform: linux/amd64
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'
+    networks:
+      - app_network
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  redis_data:
+  certbot_conf:
+  certbot_www:
+  kpi_bot_data:

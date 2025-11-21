@@ -546,7 +546,7 @@ function SLAReport({ data }: { data: any }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard title="Claim SLA" value={`${o?.claim_sla_compliance_rate || 0}%`} subtitle="30 min target" icon={Clock} trend={o?.claim_sla_compliance_rate >= 80 ? 'up' : 'down'} />
           <MetricCard title="Resolution SLA" value={`${o?.resolution_sla_compliance_rate || 0}%`} subtitle="2 hour target" icon={Target} trend={o?.resolution_sla_compliance_rate >= 80 ? 'up' : 'down'} />
-          <MetricCard title="Avg Time to Claim" value={formatMinutesToDuration(o?.avg_time_to_claim_minutes)} subtitle="Mean Response" icon={Activity} />
+          <MetricCard title="Avg Time to First Response" value={formatMinutesToDuration(o?.avg_time_to_claim_minutes)} subtitle="Mean Response" icon={Activity} />
           <MetricCard title="SLA Violations" value={totalViolations} subtitle="Total Count" icon={AlertTriangle} trend={totalViolations === 0 ? 'up' : 'down'} />
         </div>
       </div>

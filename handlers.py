@@ -530,17 +530,10 @@ class BotHandlers:
         self._log_command_entry("start", update, context)
 
         welcome_message = (
-            "👋 Welcome to the Raisedash KPI Bot!\n\n"
-            "This bot helps manage incidents in your team. Here's how to use it:\n\n"
+            "Welcome to the Raisedash Ticket Bot!\n\n"
+            "This bot helps manage Tickets in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
             "/ticket - Reply to an issue message with /ticket to start a ticket\n\n"
-            "🔧 Features:\n"
-            "- Department-based workflow (no more tiers) managed from the dashboard\n"
-            "- Button-based interactions end-to-end\n"
-            "- Automatic SLA reminders\n"
-            "- Race condition protection\n"
-            "- Per-group isolation\n\n"
-            "Make sure your group is activated and departments are set up in the dashboard before creating incidents."
         )
         await update.message.reply_text(welcome_message)
         logger.info("Sent welcome message")
@@ -813,6 +806,59 @@ class BotHandlers:
             activated_by=user.id
         )
 
+    async def add_company_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Platform-admin-only command to create a new company."""
+        self._log_command_entry("add_company", update, context)
+
+        user = update.effective_user
+        if not self._is_platform_admin(user.id):
+            await self._send_error_message(update, "You are not authorized to use this command.")
+            return
+
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                "Usage: /add_company <company_name>\n"
+                "Example: /add_company Acme Corporation"
+            )
+            return
+
+        company_name = " ".join(context.args).strip()
+        if len(company_name) < 2:
+            await self._send_error_message(update, "Company name must be at least 2 characters long.")
+            return
+
+        # Check if company already exists
+        existing_company = self.db.get_company_by_name(company_name)
+        if existing_company:
+            await self._send_error_message(
+                update,
+                f"Company '{company_name}' already exists with ID {existing_company['company_id']}."
+            )
+            return
+
+        try:
+            company_id = self.db.create_company(company_name)
+            await update.message.reply_text(
+                f"✅ Company '{company_name}' created successfully.\n"
+                f"Company ID: {company_id}"
+            )
+
+            self._log_audit_event(
+                "company_created",
+                company_id=company_id,
+                company_name=company_name,
+                created_by=user.id
+            )
+            logger.info(f"Created company {company_id} ({company_name}) by user {user.id}")
+
+        except Exception as e:
+            logger.error(f"Failed to create company '{company_name}': {e}", exc_info=True)
+            SentryConfig.capture_exception(e, company_name=company_name, created_by=user.id)
+            await self._send_error_message(
+                update,
+                f"Failed to create company. Error: {str(e)}"
+            )
+
     async def add_department_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Deprecated command now handled via the dashboard."""
         if update.message:
@@ -863,7 +909,7 @@ class BotHandlers:
             logger.warning("No reply message or description found")
             await self._send_error_message(
                 update,
-                "Please reply to the message describing the issue and run /ticket from that reply."
+                "Please reply to the message describing the ticket and run /ticket from that reply."
             )
             return
 
@@ -942,7 +988,7 @@ class BotHandlers:
         text, keyboard = self.message_builder.build_department_selection(
             incident,
             departments,
-            prompt="Choose the department to handle this issue.",
+            prompt="Choose the department to handle this ticket.",
             callback_prefix="select_department"
         )
 
@@ -1093,7 +1139,7 @@ class BotHandlers:
 
         current_department_id = incident['department_id']
         if not self.db.is_user_in_department(current_department_id, user.id):
-            await query.answer("Only members of the current department can transfer this issue.", show_alert=True)
+            await query.answer("Only members of the current department can transfer this ticket.", show_alert=True)
             return
 
         company_id = membership['group'].get('company_id')
@@ -1105,7 +1151,7 @@ class BotHandlers:
         text, keyboard = self.message_builder.build_department_selection(
             incident,
             departments,
-            prompt="Select a new department to transfer this issue.",
+            prompt="Select a new department to transfer this ticket.",
             callback_prefix="reassign_department",
             back_callback_data=f"restore_view:{incident_id}"
         )
@@ -1160,7 +1206,7 @@ class BotHandlers:
 
         current_department_id = incident['department_id']
         if not self.db.is_user_in_department(current_department_id, user.id):
-            await query.answer("Only members of the current department can transfer this issue.", show_alert=True)
+            await query.answer("Only members of the current department can transfer this ticket.", show_alert=True)
             return
 
         success, message = self.db.assign_incident_department(incident_id, department_id, user.id)

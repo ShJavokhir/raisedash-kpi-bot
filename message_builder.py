@@ -18,13 +18,13 @@ class MessageBuilder:
                                    back_callback_data: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
         """Build message prompting for department selection."""
         text = (
-            "🚨 NEW ISSUE\n"
+            "🚨 NEW TICKET\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             "Status: 🗂️ Choose department\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             f"{prompt}"
@@ -45,21 +45,21 @@ class MessageBuilder:
     def build_unclaimed_message(self, incident: Dict[str, Any], department_name: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for unclaimed incident within a department."""
         text = (
-            "🚨 INCIDENT READY FOR CLAIM\n"
+            "🚨 WAITING FOR DEPARTMENT\n"
             "------------------------------\n"
             f"ID: {incident['incident_id']}\n"
             f"Department: {department_name}\n"
-            "Status: 🔔 Awaiting claim\n"
+            "Status: 🔔 Awaiting response from department\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
-            "Tap Claim if you're taking this. You can still change the department if it belongs elsewhere."
+            "Tap Join if you're taking this. You can still change the department if it belongs elsewhere."
         )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Claim", callback_data=f"claim:{incident['incident_id']}")],
+            [InlineKeyboardButton("✅ Join", callback_data=f"claim:{incident['incident_id']}")],
             [InlineKeyboardButton("🔀 Change department", callback_data=f"change_department:{incident['incident_id']}")]
         ])
 
@@ -78,7 +78,7 @@ class MessageBuilder:
             f"Active: {responders}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             "Others from the department can join. Resolve when you've handled it, "
@@ -107,7 +107,7 @@ class MessageBuilder:
             "Status: ⌛ Awaiting summary\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             f"{resolver_handle}, please reply to this message with a short resolution summary (1–3 sentences)."
@@ -125,7 +125,7 @@ class MessageBuilder:
             f"Resolved by: {resolver_handle}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             "Resolution summary:\n"
@@ -146,7 +146,7 @@ class MessageBuilder:
             f"Reason: {reason}\n"
             "------------------------------\n"
             f"Reported by: {incident['created_by_handle']}\n"
-            "Issue:\n"
+            "Ticket:\n"
             f"{incident['description']}\n"
             "------------------------------\n"
             "Resolution summary:\n"
@@ -167,13 +167,13 @@ class MessageBuilder:
         """Build reminder message for unclaimed incident."""
         department_line = f"Department: {department_name}\n" if department_name else ""
         return (
-            "⏰ Unclaimed incident reminder\n"
+            "⏰ Unassigned ticket reminder\n"
             "------------------------------\n"
             f"Incident: {incident_id}\n"
             f"{department_line}"
-            f"Unclaimed for: {minutes} minutes\n"
+            f"Unassigned for: {minutes} minutes\n"
             "------------------------------\n"
-            "Please review the pinned incident message and claim it if you are taking ownership."
+            "Please review the pinned ticket message and join if you are taking ownership."
         )
 
     @staticmethod
@@ -190,5 +190,5 @@ class MessageBuilder:
         mentions = " ".join(department_handles)
         return (
             f"🔔 {mentions}\n"
-            f"Please review incident {incident_id} and claim it if you are taking ownership."
+            f"Please review ticket {incident_id} and join if you are taking ownership."
         )

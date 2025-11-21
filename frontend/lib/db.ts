@@ -1,8 +1,16 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 
+function resolveDatabasePath() {
+  const envPath = process.env.DATABASE_PATH?.trim();
+  if (envPath) {
+    return path.resolve(envPath);
+  }
+  return path.join(process.cwd(), '..', 'incidents.db');
+}
+
 // Path to the SQLite database (parent directory)
-const DB_PATH = path.join(process.cwd(), '..', 'incidents.db');
+const DB_PATH = resolveDatabasePath();
 
 let dbInstance: Database.Database | null = null;
 

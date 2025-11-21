@@ -1,99 +1,151 @@
-# Multi-stage Dockerfile for RaiseDash KPI Bot
-# Combines Python Telegram bot and Next.js frontend in single efficient image
+# syntax=docker/dockerfile:1.7
 
-# ================================
-# Stage 1: Build Next.js Frontend
-# ================================
-FROM node:20-alpine AS frontend-builder
-
-# Install Python for native module compilation (needed for better-sqlite3)
-RUN apk add --no-cache python3 py3-pip
+#############################################
+# Stage 1: Build the Next.js dashboard
+#############################################
+FROM node:20-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy package files
-COPY frontend/package*.json ./
+# Install build prerequisites for optional native modules (better-sqlite3)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies (including dev dependencies for build, then clean up)
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY frontend/package*.json ./
 RUN npm ci
 
-# Copy source code
+# Force rebuild native modules for target platform
+RUN npm rebuild better-sqlite3 --build-from-source
+
 COPY frontend/ ./
+RUN npm run build \
+    && npm prune --omit=dev
 
-# Build the application
-RUN npm run build
+#############################################
+# Stage 2: Runtime image with bot + dashboard
+#############################################
+FROM node:20-bookworm-slim AS runtime
 
-# ================================
-# Stage 2: Python Bot Environment
-# ================================
-FROM python:3.11-slim AS bot-builder
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PORT=3000 \
+    DATABASE_PATH=/app/incidents.db
 
-# Install system dependencies for better-sqlite3
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy Python requirements
-COPY requirements.txt ./
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# ================================
-# Final Stage: Combine Everything
-# ================================
-FROM python:3.11-slim
-
-# Install Node.js 20 runtime for Next.js (lighter than full Node.js)
-RUN apt-get update && apt-get install -y \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create app directory
 WORKDIR /app
 
-# Copy Python environment and dependencies
-COPY --from=bot-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=bot-builder /usr/local/bin /usr/local/bin
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+        python3-pip \
+        python3-dev \
+        build-essential \
+        pkg-config \
+        tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/venv
 
-# Copy Python source code
-COPY bot.py handlers.py database.py config.py sentry_config.py \
-     message_builder.py notification_service.py reminders.py \
-     time_utils.py logging_config.py ./
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# Copy Next.js built application
-COPY --from=frontend-builder /app/frontend/.next /app/frontend/.next
-COPY --from=frontend-builder /app/frontend/public /app/frontend/public
-COPY --from=frontend-builder /app/frontend/package*.json /app/frontend/
-COPY frontend/next.config.ts frontend/tsconfig.json /app/frontend/
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install production dependencies for Next.js
-RUN cd frontend && npm ci --only=production
+# Copy Python bot sources and assets
+COPY bot.py \
+     config.py \
+     database.py \
+     handlers.py \
+     logging_config.py \
+     message_builder.py \
+     notification_service.py \
+     reminders.py \
+     reporting.py \
+     sentry_config.py \
+     time_utils.py \
+     ./
 
-# Copy assets and configuration templates
-COPY assets/ /app/assets/
-COPY .env.example /app/
+COPY assets ./assets
 
-# Create data directory for SQLite database
 RUN mkdir -p /app/data
+COPY incidents.db /app/data/incidents.db
 
-# Create startup script
-COPY docker-start.sh /app/
-RUN chmod +x /app/docker-start.sh
+# Copy production-ready Next.js build from the builder stage
+RUN mkdir -p frontend
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+COPY --from=frontend-builder /app/frontend/node_modules ./frontend/node_modules
+COPY --from=frontend-builder /app/frontend/package.json ./frontend/
+COPY --from=frontend-builder /app/frontend/package-lock.json ./frontend/
+COPY --from=frontend-builder /app/frontend/next.config.ts ./frontend/
+COPY --from=frontend-builder /app/frontend/postcss.config.mjs ./frontend/
+COPY --from=frontend-builder /app/frontend/tsconfig.json ./frontend/
+COPY --from=frontend-builder /app/frontend/next-env.d.ts ./frontend/
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
-# Environment variables
-ENV NODE_ENV=production
-ENV DATABASE_PATH=/app/data/incidents.db
+# Rebuild better-sqlite3 in the runtime stage to match the final architecture
+WORKDIR /app/frontend
+RUN npm rebuild better-sqlite3 --build-from-source
+WORKDIR /app
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python3 -c "import sqlite3; sqlite3.connect('${DATABASE_PATH}').execute('SELECT 1').fetchone()" || exit 1
+# Simple supervisor to run both services in one container
+RUN cat <<'EOF' >/usr/local/bin/start-services.sh
+#!/bin/bash
+set -euo pipefail
 
-# Expose Next.js port
+NEXT_PORT_VALUE="${NEXT_PORT:-3000}"
+DB_PATH="${DATABASE_PATH:-/app/incidents.db}"
+DB_DIR="$(dirname "$DB_PATH")"
+
+mkdir -p "$DB_DIR"
+
+if [ ! -f "$DB_PATH" ]; then
+  echo "Initializing SQLite database at ${DB_PATH}..."
+  DB_INIT_PATH="$DB_PATH" python - <<'PY'
+import os
+from database import Database
+
+db_path = os.environ["DB_INIT_PATH"]
+Database(db_path)
+PY
+fi
+
+echo "Starting Telegram bot..."
+python /app/bot.py &
+BOT_PID=$!
+
+echo "Starting Next.js dashboard on port ${NEXT_PORT_VALUE}..."
+npm --prefix /app/frontend run start -- --hostname 0.0.0.0 --port "${NEXT_PORT_VALUE}" &
+FRONT_PID=$!
+
+terminate() {
+  echo "Stopping services..."
+  kill -TERM "$FRONT_PID" "$BOT_PID" 2>/dev/null || true
+}
+
+trap terminate SIGINT SIGTERM
+
+wait -n "$FRONT_PID" "$BOT_PID"
+STATUS=$?
+
+terminate
+wait || true
+
+exit "$STATUS"
+EOF
+
+RUN chmod +x /usr/local/bin/start-services.sh
+
+RUN chown -R node:node /app
+
+USER node
+
 EXPOSE 3000
 
-# Start both services
-CMD ["/app/docker-start.sh"]
+ENTRYPOINT ["tini", "--"]
+CMD ["start-services.sh"]
+

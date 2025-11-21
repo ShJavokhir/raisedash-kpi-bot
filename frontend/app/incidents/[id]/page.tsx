@@ -265,7 +265,7 @@ export default function PublicIncidentPage() {
                 </div>
                 {incident.t_first_claimed && (
                   <div className="py-2 tech-border-b">
-                    <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Time to Claim</dt>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Time to First Response</dt>
                     <dd className="text-xs text-neutral-900 font-mono">
                       {calculateDuration(incident.t_created, incident.t_first_claimed)}
                     </dd>

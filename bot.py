@@ -105,6 +105,7 @@ class IncidentBot:
             ("start", self.bot_handlers.start_command),
             ("help", self.bot_handlers.start_command),
             ("report", self.bot_handlers.report_command),
+            ("add_company", self.bot_handlers.add_company_command),
             ("add_group", self.bot_handlers.add_group_command),
             ("ticket", self.bot_handlers.ticket_command),
         ]
