@@ -115,7 +115,7 @@ cursor.execute("PRAGMA journal_mode=WAL")
 
 #### 8. **Rate Limiting**
 
-**Issue**: No rate limiting on commands. A user could spam `/new_issue` and create many incidents.
+**Issue**: No rate limiting on commands. A user could spam `/ticket` and create many incidents.
 
 **Current Mitigation**:
 - None
@@ -132,7 +132,7 @@ cursor.execute("PRAGMA journal_mode=WAL")
 - None (will fail with TelegramError if too long)
 
 **Production Recommendation**:
-- Validate description length in `/new_issue`
+- Validate description length in `/ticket`
 - Truncate with "..." if needed
 - Or split into multiple messages
 
@@ -325,7 +325,7 @@ Before deploying to production:
 
 1. ✅ Enable WAL mode in SQLite
 2. ⚠️ Add comprehensive error handling for message editing
-3. ⚠️ Add rate limiting for /new_issue
+3. ⚠️ Add rate limiting for /ticket
 4. ⚠️ Add input validation for descriptions
 5. ⚠️ Test with multiple concurrent users
 6. ⚠️ Set up monitoring and alerting

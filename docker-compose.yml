@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  raisedash-bot:
+    build: .
+    container_name: raisedash-kpi-bot
+    restart: unless-stopped
+
+    # Environment configuration
+    env_file:
+      - .env
+
+    # Ports
+    ports:
+      - "3000:3000"
+
+    # Volumes for persistent data
+    volumes:
+      - ./data:/app/data:rw
+      - ./assets:/app/assets:ro
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sqlite3; sqlite3.connect('${DATABASE_PATH:-/app/data/incidents.db}').execute('SELECT 1').fetchone()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Resource limits (adjust based on your AWS EC2 instance)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: For production with external database volume
+# volumes:
+#   raisedash_data:
+#     driver: local

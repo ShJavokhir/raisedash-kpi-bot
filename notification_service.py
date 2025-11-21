@@ -103,7 +103,7 @@ class NotificationService:
                 f"✅ <b>Group Approved!</b>\n\n"
                 f"Great news! This group has been approved and activated for <b>{company_name}</b>.\n\n"
                 f"🎉 The KPI bot is now fully active in this group.\n"
-                f"📊 You can start creating incidents with /new_issue\n"
+                f"📊 You can start creating incidents with /ticket\n"
                 f"📋 Manage departments in the dashboard\n"
                 f"❓ Get help with /help"
             )

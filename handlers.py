@@ -274,9 +274,9 @@ class BotHandlers:
         elif update.message:
             await update.message.reply_text(info_line)
 
-    async def _handle_pending_new_issue(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                        membership: Dict[str, Any]):
-        """Track pending activation attempts when /new_issue is used."""
+    async def _handle_pending_ticket(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                     membership: Dict[str, Any]):
+        """Track pending activation attempts when /ticket is used."""
         chat = update.effective_chat
         user = update.effective_user
         group = membership.get('group') or {}
@@ -533,7 +533,7 @@ class BotHandlers:
             "👋 Welcome to the Raisedash KPI Bot!\n\n"
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
-            "/new_issue - Reply to an issue message with /new_issue to start a ticket\n\n"
+            "/ticket - Reply to an issue message with /ticket to start a ticket\n\n"
             "🔧 Features:\n"
             "- Department-based workflow (no more tiers) managed from the dashboard\n"
             "- Button-based interactions end-to-end\n"
@@ -827,12 +827,12 @@ class BotHandlers:
                 "Department management is now handled in the dashboard. Please use the frontend to view departments."
             )
 
-    async def new_issue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /new_issue command - creates a new incident."""
-        self._log_command_entry("new_issue", update, context)
+    async def ticket_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /ticket command - creates a new incident."""
+        self._log_command_entry("ticket", update, context)
 
         if not self._is_group_chat(update.effective_chat):
-            logger.warning("new_issue command used outside of group chat")
+            logger.warning("ticket command used outside of group chat")
             await self._send_error_message(update, "This command only works in groups.")
             return
 
@@ -844,10 +844,10 @@ class BotHandlers:
         membership = await self._require_active_group(
             update,
             context,
-            on_pending=self._handle_pending_new_issue
+            on_pending=self._handle_pending_ticket
         )
         if not membership:
-            logger.info(f"/new_issue blocked because group {chat.id if chat else 'unknown'} is not active.")
+            logger.info(f"/ticket blocked because group {chat.id if chat else 'unknown'} is not active.")
             return
 
         group_info = membership['group']
@@ -863,7 +863,7 @@ class BotHandlers:
             logger.warning("No reply message or description found")
             await self._send_error_message(
                 update,
-                "Please reply to the message describing the issue and run /new_issue from that reply."
+                "Please reply to the message describing the issue and run /ticket from that reply."
             )
             return
 

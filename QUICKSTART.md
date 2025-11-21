@@ -83,7 +83,7 @@ Once a group is active, run `/configure_managers @alice @bob` inside any of the 
 ## Step 7: Test It Out!
 
 ```
-/new_issue Test incident - truck breakdown
+/ticket Test incident - truck breakdown
 ```
 
 You should see a pinned message with buttons. Click "✅ Claim" to claim the incident!
@@ -128,7 +128,7 @@ If you encounter issues:
 | `/configure_managers @user1 @user2` | Set managers (admin only) |
 | `/add_dispatcher @user` | Add dispatcher (admin only) |
 | `/register_driver` | Register as driver |
-| `/new_issue <description>` | Create incident |
+| `/ticket <description>` | Create incident |
 | `/add_group <company_id> <group_id>` | Platform admin: activate group |
 
 ## Quick Reference - Workflow

@@ -27,7 +27,7 @@ Enable logistics/operations teams to manage incidents efficiently with departmen
 
 ## Incident Lifecycle
 
-1. **Awaiting_Department** → User replies to an issue message with `/new_issue`.
+1. **Awaiting_Department** → User replies to an issue message with `/ticket`.
 2. **Awaiting_Claim** → Reporter chooses a department; members are notified and SLA timer starts.
 3. **In_Progress** → Department member(s) claim and work the issue.
 4. **Change Department** → Current department can transfer the issue to another department.
@@ -62,7 +62,7 @@ config.py              # Configuration management
 
 ## Commands
 
-- `/new_issue` - Reply to an issue message to create an incident
+- `/ticket` - Reply to an issue message to create an incident
 - Departments are configured in the dashboard (frontend)
 - `/register_driver` - Self-register as driver
 - `/start` or `/help` - Show help
