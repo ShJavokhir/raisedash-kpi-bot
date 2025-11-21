@@ -63,9 +63,7 @@ config.py              # Configuration management
 ## Commands
 
 - `/new_issue` - Reply to an issue message to create an incident
-- `/add_department <name>` - Create a department (admin only)
-- `/add_department_member <department_id> <@user>` - Add a member to a department (admin only)
-- `/list_departments` - Show configured departments for the company
+- Departments are configured in the dashboard (frontend)
 - `/register_driver` - Self-register as driver
 - `/start` or `/help` - Show help
 

@@ -274,8 +274,67 @@ class BotHandlers:
         elif update.message:
             await update.message.reply_text(info_line)
 
+    async def _handle_pending_new_issue(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                        membership: Dict[str, Any]):
+        """Track pending activation attempts when /new_issue is used."""
+        chat = update.effective_chat
+        user = update.effective_user
+        group = membership.get('group') or {}
+        group_id = group.get('group_id') or (chat.id if chat else None)
+
+        # Track user even when activation is pending
+        if user and group_id:
+            self._track_user_interaction(user, group_id=group_id)
+
+        notification_exists = False
+        if group_id is not None:
+            try:
+                notification_exists = self.db.notification_exists(
+                    group_id,
+                    "group_pending_activation",
+                    statuses=['pending', 'sent', 'failed']
+                )
+            except Exception as exc:
+                logger.error(f"Failed to check pending notification state for group {group_id}: {exc}", exc_info=True)
+                SentryConfig.capture_exception(exc, group_id=group_id, operation="check_pending_notification")
+
+        created_notification = False
+        if group_id is not None and not notification_exists:
+            message_data = {
+                "group_id": group_id,
+                "group_name": group.get('group_name') or (chat.title if chat else None),
+                "requested_company_name": group.get('requested_company_name'),
+                "requested_by_user_id": group.get('requested_by_user_id'),
+                "requested_by_handle": group.get('requested_by_handle'),
+                "triggered_by_user_id": user.id if user else None,
+                "triggered_by_handle": self._get_user_handle(user) if user else None,
+                "triggered_by_username": user.username if user and user.username else None
+            }
+            try:
+                self.db.record_group_pending_activation_notification(
+                    group_id,
+                    message_data,
+                    status='sent'
+                )
+                created_notification = True
+            except Exception as exc:
+                logger.error(f"Failed to record pending activation notification for group {group_id}: {exc}", exc_info=True)
+                SentryConfig.capture_exception(exc, group_id=group_id, operation="record_pending_notification")
+
+        response = (
+            "Group is Waiting for activation"
+            if created_notification
+            else "This group is pending activation. Please reply to the registration prompt so Platform Admin can attach it to a company."
+        )
+
+        if update.callback_query:
+            await update.callback_query.answer(response, show_alert=True)
+        elif update.message:
+            await update.message.reply_text(response)
+
     async def _require_active_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                    chat: Optional[Chat] = None) -> Optional[Dict[str, Any]]:
+                                    chat: Optional[Chat] = None,
+                                    on_pending=None) -> Optional[Dict[str, Any]]:
         """Ensure the current chat is an active, company-attached group."""
         chat = chat or (update.effective_chat if update else None)
         if not chat or not self._is_group_chat(chat):
@@ -291,7 +350,10 @@ class BotHandlers:
             return None
 
         if not membership.get('is_active'):
-            await self._notify_pending_activation(update, context, membership)
+            if on_pending:
+                await on_pending(update, context, membership)
+            else:
+                await self._notify_pending_activation(update, context, membership)
             return None
 
         return membership
@@ -471,16 +533,14 @@ class BotHandlers:
             "👋 Welcome to the Raisedash KPI Bot!\n\n"
             "This bot helps manage incidents in your team. Here's how to use it:\n\n"
             "📋 Commands:\n"
-            "/add_department <name> - Create a department for this company (Admin only)\n"
-            "/list_departments - Show configured departments for this company\n"
             "/new_issue - Reply to an issue message with /new_issue to start a ticket\n\n"
             "🔧 Features:\n"
-            "- Department-based workflow (no more tiers)\n"
+            "- Department-based workflow (no more tiers) managed from the dashboard\n"
             "- Button-based interactions end-to-end\n"
             "- Automatic SLA reminders\n"
             "- Race condition protection\n"
             "- Per-group isolation\n\n"
-            "Start by adding at least one department with /add_department."
+            "Make sure your group is activated and departments are set up in the dashboard before creating incidents."
         )
         await update.message.reply_text(welcome_message)
         logger.info("Sent welcome message")
@@ -754,64 +814,18 @@ class BotHandlers:
         )
 
     async def add_department_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Group admin command to create a department for the current company."""
-        if not self._is_group_chat(update.effective_chat):
-            await self._send_error_message(update, "This command only works in groups.")
-            return
-
-        user = update.effective_user
-        chat = update.effective_chat
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ['creator', 'administrator']:
-            await self._send_error_message(update, "Only group admins can add departments.")
-            return
-
-        membership = await self._require_active_group(update, context)
-        if not membership:
-            return
-
-        company_id = membership['group'].get('company_id')
-        if not company_id:
-            await self._send_error_message(update, "This group is not attached to a company.")
-            return
-
-        if not context.args:
-            await update.message.reply_text("Usage: /add_department <name>")
-            return
-
-        name = " ".join(context.args).strip()
-        if len(name) < 2:
-            await self._send_error_message(update, "Department name is too short.")
-            return
-
-        try:
-            dept_id = self.db.create_department(company_id, name)
-        except ValueError as exc:
-            await self._send_error_message(update, str(exc))
-            return
-
-        await update.message.reply_text(
-            f"✅ Department '{name}' created with ID {dept_id}."
-        )
+        """Deprecated command now handled via the dashboard."""
+        if update.message:
+            await update.message.reply_text(
+                "Department management is now handled in the dashboard. Please use the frontend to add departments."
+            )
 
     async def list_departments_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """List configured departments for the company."""
-        membership = await self._require_active_group(update, context)
-        if not membership:
-            return
-
-        company_id = membership['group'].get('company_id')
-        if not company_id:
-            await self._send_error_message(update, "This group is not attached to a company.")
-            return
-
-        departments = self.db.list_company_departments(company_id)
-        if not departments:
-            await update.message.reply_text("No departments configured yet. Use /add_department to create one.")
-            return
-
-        lines = [f"{dept['department_id']}: {dept['name']}" for dept in departments]
-        await update.message.reply_text("🏢 Departments:\n" + "\n".join(lines))
+        """Deprecated command now handled via the dashboard."""
+        if update.message:
+            await update.message.reply_text(
+                "Department management is now handled in the dashboard. Please use the frontend to view departments."
+            )
 
     async def new_issue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new_issue command - creates a new incident."""
@@ -827,9 +841,13 @@ class BotHandlers:
 
         logger.info(f"Creating new incident in group {chat.id}")
 
-        membership = await self._require_active_group(update, context)
+        membership = await self._require_active_group(
+            update,
+            context,
+            on_pending=self._handle_pending_new_issue
+        )
         if not membership:
-            logger.warning("Group membership check failed")
+            logger.info(f"/new_issue blocked because group {chat.id if chat else 'unknown'} is not active.")
             return
 
         group_info = membership['group']
@@ -875,7 +893,7 @@ class BotHandlers:
             await self._send_error_message(
                 update,
                 "No departments are configured for this company yet. "
-                "Ask an admin to run /add_department first."
+                "Please set up departments in the dashboard before creating incidents."
             )
             return
 

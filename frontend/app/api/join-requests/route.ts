@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
         requested_by_handle,
         requested_company_name
       FROM groups
-      WHERE status = 'pending'
+      WHERE status = 'pending' OR status = 'group_pending_activation'
         AND requested_company_name IS NOT NULL
       ORDER BY group_id DESC
     `).all() as any[];

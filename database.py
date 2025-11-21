@@ -1329,7 +1329,7 @@ class Database:
                             language_code, is_bot, team_role, group_connections,
                             metadata, created_at, updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         user_id, telegram_handle, username, first_name, last_name,
                         language_code, 1 if is_bot else 0, final_team_role,
@@ -2014,7 +2014,7 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT status, department_id FROM incidents WHERE incident_id = ?
+                    SELECT status, department_id, t_first_claimed FROM incidents WHERE incident_id = ?
                 """, (incident_id,))
                 incident = cursor.fetchone()
 
@@ -2379,6 +2379,78 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     # ==================== Notification Queue Functions ====================
+
+    def notification_exists(self, group_id: int, message_type: str,
+                            statuses: Optional[List[str]] = None) -> bool:
+        """
+        Check whether a notification for a group/message_type already exists.
+
+        Args:
+            group_id: Telegram group ID
+            message_type: Notification type identifier
+            statuses: Optional list of statuses to filter by
+
+        Returns:
+            True if a matching notification is present, False otherwise
+        """
+        allowed_statuses = {'pending', 'sent', 'failed'}
+        status_filter = [
+            status for status in (statuses or [])
+            if status in allowed_statuses
+        ]
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                SELECT 1
+                FROM pending_notifications
+                WHERE group_id = ?
+                  AND message_type = ?
+            """
+            params: List[Any] = [group_id, message_type]
+
+            if status_filter:
+                placeholders = ",".join(["?"] * len(status_filter))
+                query += f" AND status IN ({placeholders})"
+                params.extend(status_filter)
+
+            query += " LIMIT 1"
+            cursor.execute(query, params)
+            return cursor.fetchone() is not None
+
+    def record_group_pending_activation_notification(self, group_id: int,
+                                                     message_data: dict,
+                                                     status: str = 'pending') -> int:
+        """
+        Insert a notification record for pending group activation attempts.
+
+        Args:
+            group_id: Telegram group ID
+            message_data: Additional details to persist (user/group info)
+            status: Initial status for the notification (pending/sent/failed)
+
+        Returns:
+            The notification_id of the inserted record
+        """
+        if status not in ('pending', 'sent', 'failed'):
+            raise ValueError("Invalid status for notification")
+
+        now = utc_iso_now()
+        sent_at = now if status != 'pending' else None
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO pending_notifications
+                    (group_id, message_type, message_data, status, created_at, sent_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (group_id, 'group_pending_activation', json.dumps(message_data), status, now, sent_at))
+            notification_id = cursor.lastrowid
+            logger.info(
+                f"Recorded pending activation notification {notification_id} for group {group_id} "
+                f"with status {status}"
+            )
+            return notification_id
 
     def create_notification(self, group_id: int, message_type: str, message_data: dict) -> int:
         """
