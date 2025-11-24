@@ -6,6 +6,7 @@ import logging
 from typing import Dict
 from telegram import Bot
 from telegram.error import TelegramError
+from telegram.constants import ParseMode
 
 from database import Database
 from message_builder import MessageBuilder
@@ -157,7 +158,8 @@ class ReminderService:
                         await self.bot.edit_message_text(
                             chat_id=incident['group_id'],
                             message_id=pinned_message_id,
-                            text=closed_text
+                            text=closed_text,
+                            parse_mode=ParseMode.HTML
                         )
                     except TelegramError as e:
                         logger.error(f"Error updating pinned message for {incident_id}: {e}")
@@ -173,7 +175,8 @@ class ReminderService:
                     try:
                         await self.bot.send_message(
                             chat_id=incident['group_id'],
-                            text=closed_text
+                            text=closed_text,
+                            parse_mode=ParseMode.HTML
                         )
                     except TelegramError as e:
                         logger.error(f"Error sending closed message for {incident_id}: {e}")

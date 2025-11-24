@@ -1,11 +1,22 @@
 """Message builder module for constructing incident messages and inline keyboards."""
 
+import html
 from typing import Dict, Any, Optional, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 class MessageBuilder:
     """Builds formatted messages and inline keyboards for incident states."""
+
+    @staticmethod
+    def _escape_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return html.escape(str(value))
+
+    @classmethod
+    def _format_description(cls, description: Any) -> str:
+        return f"<i>{cls._escape_text(description)}</i>"
 
     @staticmethod
     def _chunk_buttons(buttons: List[InlineKeyboardButton], per_row: int = 2) -> List[List[InlineKeyboardButton]]:
@@ -17,17 +28,21 @@ class MessageBuilder:
                                    callback_prefix: str,
                                    back_callback_data: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
         """Build message prompting for department selection."""
+        incident_id = self._escape_text(incident['incident_id'])
+        reported_by = self._escape_text(incident['created_by_handle'])
+        description = self._format_description(incident['description'])
+        prompt_text = self._escape_text(prompt)
         text = (
             "🚨 NEW TICKET\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
+            f"ID: {incident_id}\n"
             "Status: 🗂️ Choose department\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
-            f"{prompt}"
+            f"{prompt_text}"
         )
 
         buttons: List[InlineKeyboardButton] = [
@@ -44,16 +59,20 @@ class MessageBuilder:
 
     def build_unclaimed_message(self, incident: Dict[str, Any], department_name: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for unclaimed incident within a department."""
+        incident_id = self._escape_text(incident['incident_id'])
+        dept_name = self._escape_text(department_name)
+        reported_by = self._escape_text(incident['created_by_handle'])
+        description = self._format_description(incident['description'])
         text = (
             "🚨 WAITING FOR DEPARTMENT\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
-            f"Department: {department_name}\n"
+            f"ID: {incident_id}\n"
+            f"Department: {dept_name}\n"
             "Status: 🔔 Awaiting response from department\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
             "Tap Join if you're taking this. You can still change the department if it belongs elsewhere."
         )
@@ -68,18 +87,22 @@ class MessageBuilder:
     def build_claimed_message(self, incident: Dict[str, Any], claimer_handles: List[str],
                               department_name: str) -> tuple[str, InlineKeyboardMarkup]:
         """Build message for claimed incident."""
-        responders = ", ".join(claimer_handles) if claimer_handles else "—"
+        incident_id = self._escape_text(incident['incident_id'])
+        dept_name = self._escape_text(department_name)
+        responders = self._escape_text(", ".join(claimer_handles) if claimer_handles else "—")
+        reported_by = self._escape_text(incident['created_by_handle'])
+        description = self._format_description(incident['description'])
         text = (
             "🚨 INCIDENT IN PROGRESS\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
-            f"Department: {department_name}\n"
+            f"ID: {incident_id}\n"
+            f"Department: {dept_name}\n"
             "Status: 🛠️ In progress\n"
             f"Active: {responders}\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
             "Others from the department can join. Resolve when you've handled it, "
             "or move it to another department if needed."
@@ -99,58 +122,72 @@ class MessageBuilder:
     @staticmethod
     def build_awaiting_summary_message(incident: Dict[str, Any], resolver_handle: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
         """Build message for awaiting summary state."""
+        incident_id = MessageBuilder._escape_text(incident['incident_id'])
+        resolver = MessageBuilder._escape_text(resolver_handle)
+        reported_by = MessageBuilder._escape_text(incident['created_by_handle'])
+        description = MessageBuilder._format_description(incident['description'])
         text = (
             "📄 INCIDENT AWAITING RESOLUTION SUMMARY\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
-            f"Resolver: {resolver_handle}\n"
+            f"ID: {incident_id}\n"
+            f"Resolver: {resolver}\n"
             "Status: ⌛ Awaiting summary\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
-            f"{resolver_handle}, please reply to this message with a short resolution summary (1–3 sentences)."
+            f"{resolver}, please reply to this message with a short resolution summary (1–3 sentences)."
         )
         return text, None
 
     @staticmethod
     def build_resolved_message(incident: Dict[str, Any], resolver_handle: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
         """Build message for resolved incident."""
+        incident_id = MessageBuilder._escape_text(incident['incident_id'])
+        resolver = MessageBuilder._escape_text(resolver_handle)
+        reported_by = MessageBuilder._escape_text(incident['created_by_handle'])
+        description = MessageBuilder._format_description(incident['description'])
+        summary = MessageBuilder._escape_text(incident.get('resolution_summary', ''))
         text = (
             "✅ INCIDENT RESOLVED\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
+            f"ID: {incident_id}\n"
             "Status: ✅ Resolved\n"
-            f"Resolved by: {resolver_handle}\n"
+            f"Resolved by: {resolver}\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
             "Resolution summary:\n"
-            f"{incident['resolution_summary']}"
+            f"{summary}"
         )
         return text, None
 
     @staticmethod
     def build_closed_message(incident: Dict[str, Any], closed_by: Optional[str], reason: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
         """Build message for auto-closed incident (no summary provided)."""
-        closed_by_text = closed_by or "System"
+        incident_id = MessageBuilder._escape_text(incident['incident_id'])
+        closed_by_text = MessageBuilder._escape_text(closed_by or "System")
+        closed_reason = MessageBuilder._escape_text(reason)
+        reported_by = MessageBuilder._escape_text(incident['created_by_handle'])
+        description = MessageBuilder._format_description(incident['description'])
+        summary = MessageBuilder._escape_text(incident.get('resolution_summary', 'No summary provided.'))
         text = (
             "❌ INCIDENT CLOSED\n"
             "------------------------------\n"
-            f"ID: {incident['incident_id']}\n"
+            f"ID: {incident_id}\n"
             "Status: ❌ Closed\n"
             f"Closed by: {closed_by_text}\n"
-            f"Reason: {reason}\n"
+            f"Reason: {closed_reason}\n"
             "------------------------------\n"
-            f"Reported by: {incident['created_by_handle']}\n"
+            f"Reported by: {reported_by}\n"
             "Ticket:\n"
-            f"{incident['description']}\n"
+            f"{description}\n"
             "------------------------------\n"
             "Resolution summary:\n"
-            f"{incident.get('resolution_summary', 'No summary provided.')}"
+            f"{summary}"
         )
         return text, None
 

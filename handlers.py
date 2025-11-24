@@ -6,10 +6,12 @@ import logging
 import re
 from typing import Optional, List, Dict, Any, Tuple
 from telegram import Update, Chat
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 
 from database import Database
+from conversation_cache import ConversationCache
 from message_builder import MessageBuilder
 from config import Config
 from reporting import KPIReportGenerator, html_to_bytes
@@ -27,14 +29,20 @@ class BotHandlers:
         'Dispatcher': 2,
         'OpsManager': 3
     }
+    MAX_DESCRIPTION_LENGTH = 3000
 
     def __init__(self, db: Database,
                  platform_admin_ids: Optional[List[int]] = None,
-                 bot_user_id: Optional[int] = None):
+                 bot_user_id: Optional[int] = None,
+                 conversation_cache: Optional[ConversationCache] = None):
         self.db = db
         self.message_builder = MessageBuilder()
         self.platform_admin_ids = set(platform_admin_ids or [])
         self.bot_user_id = bot_user_id
+        self.conversation_cache = conversation_cache or ConversationCache(
+            Config.get_issue_context_window_seconds()
+        )
+        self.issue_message_limit = Config.ISSUE_CONTEXT_MESSAGE_LIMIT
         self.report_generator = KPIReportGenerator(
             db,
             Config.REPORT_TIMEZONE,
@@ -199,6 +207,56 @@ class BotHandlers:
             logger.error(f"Error tracking user interaction: {e}", exc_info=True)
             SentryConfig.capture_exception(e, operation="track_user_interaction")
             return None
+
+    def _cache_group_message(self, message):
+        """Persist recent group messages in memory for short-term context."""
+        if not message or not self.conversation_cache:
+            return
+
+        chat = message.chat
+        user = message.from_user
+
+        if not chat or not self._is_group_chat(chat):
+            return
+
+        if not user or getattr(user, "is_bot", False):
+            return
+
+        text = message.text or message.caption
+        if not text:
+            return
+
+        try:
+            self.conversation_cache.add_message(chat.id, user.id, text)
+        except Exception as exc:
+            logger.error(f"Failed to cache message for group {chat.id}: {exc}", exc_info=True)
+            SentryConfig.capture_exception(
+                exc,
+                group_id=chat.id,
+                user_id=user.id if user else None,
+                operation="cache_group_message"
+            )
+
+    def _get_recent_user_messages_for_issue(self, group_id: int, user_id: int) -> List[str]:
+        """Return the most recent messages for a user within the configured window."""
+        if not self.conversation_cache:
+            return []
+
+        try:
+            return self.conversation_cache.get_recent_messages(
+                group_id,
+                user_id,
+                limit=self.issue_message_limit
+            )
+        except Exception as exc:
+            logger.error(f"Failed to read cached messages for group {group_id}: {exc}", exc_info=True)
+            SentryConfig.capture_exception(
+                exc,
+                group_id=group_id,
+                user_id=user_id,
+                operation="get_recent_user_messages_for_issue"
+            )
+            return []
 
     def _role_rank(self, role: Optional[str]) -> int:
         """Return numeric rank for a role (higher is more privileged)."""
@@ -873,6 +931,119 @@ class BotHandlers:
                 "Department management is now handled in the dashboard. Please use the frontend to view departments."
             )
 
+    async def _create_incident_from_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                                membership: Dict[str, Any], description: str,
+                                                origin_message=None, description_source: str = "reply"):
+        """Shared flow for creating an incident from a provided description."""
+        user = update.effective_user
+        chat = update.effective_chat
+
+        if not user or not chat:
+            await self._send_error_message(update, "Missing user or chat context.")
+            return
+
+        description = description.strip() if description else ""
+        if not description:
+            await self._send_error_message(update, "Description cannot be empty.")
+            return
+
+        if len(description) > self.MAX_DESCRIPTION_LENGTH:
+            logger.warning(f"Description too long: {len(description)} characters")
+            await self._send_error_message(
+                update,
+                f"Description too long. Maximum {self.MAX_DESCRIPTION_LENGTH} characters allowed."
+            )
+            return
+
+        if len(description) < 5:
+            logger.warning(f"Description too short: {len(description)} characters")
+            await self._send_error_message(
+                update,
+                "Description too short. Please provide more details (at least 5 characters)."
+            )
+            return
+
+        group_info = membership.get('group') if membership else None
+        company_id = group_info.get('company_id') if group_info else None
+        departments = self.db.list_company_departments(company_id) if company_id else []
+        if not departments:
+            logger.error(f"No departments configured for companyId={company_id}")
+            await self._send_error_message(
+                update,
+                "No departments are configured for this company yet. "
+                "Please set up departments in the dashboard before creating incidents."
+            )
+            return
+
+        # Track user creating the incident (captures comprehensive user data)
+        self._track_user_interaction(user, group_id=chat.id)
+        user_handle = self._get_user_handle(user)
+
+        SentryConfig.add_breadcrumb(
+            message=f"User {user.id} creating new incident",
+            category="incident",
+            level="info",
+            data={
+                "group_id": chat.id,
+                "company_id": company_id,
+                "description_length": len(description),
+                "description_source": description_source
+            }
+        )
+
+        logger.info(f"Creating incident in database for user={user_handle}, companyId={company_id}")
+        incident_id = self.db.create_incident(
+            group_id=chat.id,
+            created_by_id=user.id,
+            created_by_handle=user_handle,
+            description=description,
+            company_id=company_id,
+            source_message_id=origin_message.message_id if origin_message else None
+        )
+        logger.info(f"Incident created with incidentId={incident_id}")
+
+        # Set incident context for Sentry
+        SentryConfig.set_tag("incident_id", incident_id)
+        SentryConfig.set_context("incident", {
+            "incident_id": incident_id,
+            "group_id": chat.id,
+            "company_id": company_id,
+            "created_by": user_handle
+        })
+
+        incident = self.db.get_incident(incident_id)
+        text, keyboard = self.message_builder.build_department_selection(
+            incident,
+            departments,
+            prompt="Choose the department to handle this ticket.",
+            callback_prefix="select_department"
+        )
+
+        try:
+            sent_message = await update.message.reply_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+
+            self.db.update_incident_message_id(incident_id, sent_message.message_id)
+
+            await context.bot.pin_chat_message(
+                chat_id=chat.id,
+                message_id=sent_message.message_id,
+                disable_notification=False
+            )
+
+            logger.info(f"Created and pinned incident {incident_id} in group {chat.id}")
+
+        except TelegramError as e:
+            logger.error(f"Error creating incident message: {e}")
+            await self._send_error_message(
+                update,
+                f"Created incident {incident_id} but couldn't pin the message. "
+                f"Make sure the bot has pin message permissions."
+            )
+
     async def ticket_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /ticket command - creates a new incident."""
         self._log_command_entry("ticket", update, context)
@@ -900,121 +1071,40 @@ class BotHandlers:
         company_id = group_info.get('company_id')
         logger.info(f"Group is active, companyId={company_id}")
 
-        # Require the command to be a reply to the issue description
         origin_message = update.message.reply_to_message if update.message else None
         description = (origin_message.text if origin_message and origin_message.text else None) \
             or (origin_message.caption if origin_message and origin_message.caption else None)
 
-        if not origin_message or not description:
-            logger.warning("No reply message or description found")
-            await self._send_error_message(
-                update,
-                "Please reply to the message describing the ticket and run /ticket from that reply."
-            )
-            return
+        description_source = "reply"
 
-        description = description.strip()
-        MAX_DESCRIPTION_LENGTH = 3000
-        if len(description) > MAX_DESCRIPTION_LENGTH:
-            logger.warning(f"Description too long: {len(description)} characters")
-            await self._send_error_message(
-                update,
-                f"Description too long. Maximum {MAX_DESCRIPTION_LENGTH} characters allowed."
-            )
-            return
+        if not description:
+            # Fallback: use cached recent messages from this user in the group
+            recent_messages = self._get_recent_user_messages_for_issue(chat.id, user.id)
+            if recent_messages:
+                description = "\n".join(recent_messages)
+                description_source = "recent_messages"
+                origin_message = None  # no specific source message
+                logger.info(
+                    f"Using cached recent messages for /ticket from user {user.id} "
+                    f"in group {chat.id} (count={len(recent_messages)})"
+                )
+            else:
+                logger.warning("No reply message or cached description found")
+                await self._send_error_message(
+                    update,
+                    "Please reply to the message describing the ticket or send your last few messages "
+                    f"within {Config.ISSUE_CONTEXT_WINDOW_MINUTES} minutes before running /ticket."
+                )
+                return
 
-        if len(description) < 5:
-            logger.warning(f"Description too short: {len(description)} characters")
-            await self._send_error_message(
-                update,
-                "Description too short. Please provide more details (at least 5 characters)."
-            )
-            return
-
-        logger.debug(f"Description length: {len(description)} characters")
-
-        departments = self.db.list_company_departments(company_id) if company_id else []
-        if not departments:
-            logger.error(f"No departments configured for companyId={company_id}")
-            await self._send_error_message(
-                update,
-                "No departments are configured for this company yet. "
-                "Please set up departments in the dashboard before creating incidents."
-            )
-            return
-
-        logger.info(f"Found {len(departments)} departments for company")
-
-        # Track user creating the incident (captures comprehensive user data)
-        self._track_user_interaction(user, group_id=chat.id)
-
-        user_handle = self._get_user_handle(user)
-
-        # Add breadcrumb for incident creation
-        SentryConfig.add_breadcrumb(
-            message=f"User {user.id} creating new incident",
-            category="incident",
-            level="info",
-            data={
-                "group_id": chat.id,
-                "company_id": company_id,
-                "description_length": len(description)
-            }
+        await self._create_incident_from_description(
+            update,
+            context,
+            membership,
+            description,
+            origin_message=origin_message,
+            description_source=description_source
         )
-
-        # Create incident in database (without message_id first)
-        logger.info(f"Creating incident in database for user={user_handle}, companyId={company_id}")
-        incident_id = self.db.create_incident(
-            group_id=chat.id,
-            created_by_id=user.id,
-            created_by_handle=user_handle,
-            description=description,
-            company_id=company_id,
-            source_message_id=origin_message.message_id
-        )
-        logger.info(f"Incident created with incidentId={incident_id}")
-
-        # Set incident context for Sentry
-        SentryConfig.set_tag("incident_id", incident_id)
-        SentryConfig.set_context("incident", {
-            "incident_id": incident_id,
-            "group_id": chat.id,
-            "company_id": company_id,
-            "created_by": user_handle
-        })
-
-        # Build and send the interactive message to choose department
-        incident = self.db.get_incident(incident_id)
-        text, keyboard = self.message_builder.build_department_selection(
-            incident,
-            departments,
-            prompt="Choose the department to handle this ticket.",
-            callback_prefix="select_department"
-        )
-
-        try:
-            sent_message = await update.message.reply_text(
-                text,
-                reply_markup=keyboard
-            )
-
-            self.db.update_incident_message_id(incident_id, sent_message.message_id)
-
-            await context.bot.pin_chat_message(
-                chat_id=chat.id,
-                message_id=sent_message.message_id,
-                disable_notification=False
-            )
-
-            logger.info(f"Created and pinned incident {incident_id} in group {chat.id}")
-
-        except TelegramError as e:
-            logger.error(f"Error creating incident message: {e}")
-            await self._send_error_message(
-                update,
-                f"Created incident {incident_id} but couldn't pin the message. "
-                f"Make sure the bot has pin message permissions."
-            )
 
     # ==================== Callback Query Handlers ====================
 
@@ -1115,7 +1205,11 @@ class BotHandlers:
             department_name = department['name'] if department else "Department"
             text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
 
-            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
             await query.answer("Department selected")
 
             handles = self.db.get_department_handles(department_id)
@@ -1155,7 +1249,11 @@ class BotHandlers:
             callback_prefix="reassign_department",
             back_callback_data=f"restore_view:{incident_id}"
         )
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
         await query.answer("Choose new department")
 
     async def _handle_restore_view(self, query, user, incident_id: str):
@@ -1190,7 +1288,11 @@ class BotHandlers:
             text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
 
         try:
-            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
             await query.answer("Back to incident")
         except TelegramError as e:
             logger.error(f"Error restoring view for {incident_id}: {e}")
@@ -1219,7 +1321,11 @@ class BotHandlers:
         department_name = department['name'] if department else "Department"
         text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
 
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
         await query.answer("Department updated")
 
         handles = self.db.get_department_handles(department_id)
@@ -1272,7 +1378,11 @@ class BotHandlers:
             text, keyboard = self.message_builder.build_claimed_message(incident, claimer_handles, dept_name)
 
             try:
-                await query.edit_message_text(text, reply_markup=keyboard)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
                 await query.answer("Incident claimed successfully!")
                 logger.info(f"Message updated successfully")
             except TelegramError as e:
@@ -1310,7 +1420,11 @@ class BotHandlers:
                     text, keyboard = self.message_builder.build_unclaimed_message(incident, dept_name)
 
                 try:
-                    await query.edit_message_text(text, reply_markup=keyboard)
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
                     await query.answer("Claim released")
                     logger.info(f"Message updated successfully")
                 except TelegramError as e:
@@ -1334,7 +1448,10 @@ class BotHandlers:
                 user_handle = self._get_user_handle(user)
                 text, _ = self.message_builder.build_awaiting_summary_message(incident, user_handle)
 
-                await query.edit_message_text(text)
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML
+                )
                 logger.debug(f"Updated incident message to Awaiting_Summary state")
 
                 request_message = self.message_builder.build_resolution_request(
@@ -1360,6 +1477,9 @@ class BotHandlers:
         message = update.message
         user = message.from_user if message else None
         chat = message.chat if message else None
+
+        # Cache recent messages for short-term issue context
+        self._cache_group_message(message)
 
         # Track user interaction (capture all users sending messages)
         if message and user:
@@ -1457,7 +1577,8 @@ class BotHandlers:
                     await context.bot.edit_message_text(
                         chat_id=message.chat_id,
                         message_id=incident['pinned_message_id'],
-                        text=text
+                        text=text,
+                        parse_mode=ParseMode.HTML
                     )
                     logger.debug(f"Updated pinned message to Resolved state")
 

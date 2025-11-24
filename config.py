@@ -30,6 +30,10 @@ class Config:
     SLA_ESCALATION_NUDGE_MINUTES = int(os.getenv('SLA_ESCALATION_NUDGE_MINUTES', '15'))
     SLA_SUMMARY_TIMEOUT_MINUTES = int(os.getenv('SLA_SUMMARY_TIMEOUT_MINUTES', '10'))
 
+    # Issue context capture window (in minutes)
+    ISSUE_CONTEXT_WINDOW_MINUTES = int(os.getenv('ISSUE_CONTEXT_WINDOW_MINUTES', '3'))
+    ISSUE_CONTEXT_MESSAGE_LIMIT = int(os.getenv('ISSUE_CONTEXT_MESSAGE_LIMIT', '3'))
+
     # Background task interval
     REMINDER_CHECK_INTERVAL_MINUTES = int(os.getenv('REMINDER_CHECK_INTERVAL_MINUTES', '5'))
 
@@ -94,3 +98,8 @@ class Config:
             'sunday': 6
         }
         return mapping.get(cls.REPORT_WEEK_END_DAY.lower(), 6)
+
+    @classmethod
+    def get_issue_context_window_seconds(cls) -> int:
+        """Get the recent message capture window in seconds."""
+        return cls.ISSUE_CONTEXT_WINDOW_MINUTES * 60
