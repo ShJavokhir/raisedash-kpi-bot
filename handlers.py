@@ -1191,6 +1191,16 @@ class BotHandlers:
                 await query.answer("Only the reporter can choose the department.", show_alert=True)
                 return
 
+            department = self.db.get_department(department_id)
+            if not department:
+                logger.error(f"Department {department_id} not found for selection")
+                await query.answer("Department not found.", show_alert=True)
+                return
+            if not self.db.can_user_access_department(department, incident.get('company_id'), user.id):
+                logger.warning(f"User {user.id} is not authorized to choose restricted department {department_id}")
+                await query.answer("Only department members can choose this department.", show_alert=True)
+                return
+
             logger.info(f"Assigning incident to department")
             success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
             if not success:
@@ -1201,7 +1211,6 @@ class BotHandlers:
             logger.info(f"Department assigned successfully, state transition: Awaiting_Department -> Awaiting_Claim")
 
             updated_incident = self.db.get_incident(incident_id)
-            department = self.db.get_department(department_id)
             department_name = department['name'] if department else "Department"
             text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
 
@@ -1311,13 +1320,20 @@ class BotHandlers:
             await query.answer("Only members of the current department can transfer this ticket.", show_alert=True)
             return
 
+        department = self.db.get_department(department_id)
+        if not department:
+            await query.answer("Department not found.", show_alert=True)
+            return
+        if not self.db.can_user_access_department(department, incident.get('company_id'), user.id):
+            await query.answer("Only department members can transfer to this department.", show_alert=True)
+            return
+
         success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
         if not success:
             await query.answer(message, show_alert=True)
             return
 
         updated_incident = self.db.get_incident(incident_id)
-        department = self.db.get_department(department_id)
         department_name = department['name'] if department else "Department"
         text, keyboard = self.message_builder.build_unclaimed_message(updated_incident, department_name)
 

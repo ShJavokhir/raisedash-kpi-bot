@@ -59,6 +59,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy Python bot sources and assets
 COPY bot.py \
      config.py \
+     conversation_cache.py \
      database.py \
      handlers.py \
      logging_config.py \

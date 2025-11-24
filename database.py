@@ -1538,11 +1538,16 @@ class Database:
     # ==================== Department Management ====================
 
     def _serialize_department_row(self, row: sqlite3.Row) -> Dict[str, Any]:
+        metadata = json.loads(row['metadata'] or '{}')
+        # Default flag: departments are selectable by anyone unless restricted
+        metadata['restricted_to_department_members'] = bool(
+            metadata.get('restricted_to_department_members', False)
+        )
         return {
             'department_id': row['department_id'],
             'company_id': row['company_id'],
             'name': row['name'],
-            'metadata': json.loads(row['metadata'] or '{}'),
+            'metadata': metadata,
             'created_at': row['created_at'],
             'updated_at': row['updated_at']
         }
@@ -1554,6 +1559,10 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 timestamp = utc_iso_now()
+                metadata = metadata or {}
+                metadata['restricted_to_department_members'] = bool(
+                    metadata.get('restricted_to_department_members', False)
+                )
                 try:
                     cursor.execute("""
                         INSERT INTO departments (company_id, name, metadata, created_at, updated_at)
@@ -1638,6 +1647,51 @@ class Database:
             handle = (user.get('telegram_handle') if user else None) or f"User_{user_id}"
             handles.append(handle)
         return handles
+
+    def is_user_company_department_member(self, company_id: Optional[int], user_id: int) -> bool:
+        """Check if the user belongs to any department within a company."""
+        if company_id is None:
+            return False
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 1
+                FROM department_members dm
+                JOIN departments d ON d.department_id = dm.department_id
+                WHERE d.company_id = ? AND dm.user_id = ?
+                LIMIT 1
+            """, (company_id, user_id))
+            return cursor.fetchone() is not None
+
+    @staticmethod
+    def _is_department_restricted(department: Dict[str, Any]) -> bool:
+        metadata = department.get('metadata') or {}
+        return bool(metadata.get('restricted_to_department_members'))
+
+    def can_user_access_department(self, department: Dict[str, Any],
+                                   company_id: Optional[int], user_id: int) -> bool:
+        """Return True if the user can select/transfer to the department."""
+        if not department:
+            return False
+        if not self._is_department_restricted(department):
+            return True
+        scope_company = company_id or department.get('company_id')
+        return self.is_user_company_department_member(scope_company, user_id)
+
+    def filter_departments_for_user(self, departments: List[Dict[str, Any]],
+                                    company_id: Optional[int], user_id: int) -> List[Dict[str, Any]]:
+        """Filter departments based on restriction rules for the user."""
+        if not departments:
+            return []
+        # Shortcut: if already a department member in the company, all are allowed
+        if self.is_user_company_department_member(company_id, user_id):
+            return departments
+
+        return [
+            dept for dept in departments
+            if not self._is_department_restricted(dept)
+        ]
 
     # ==================== Incident Management ====================
 
@@ -1956,6 +2010,8 @@ class Database:
                     return False, "Department not found."
                 if incident.get('company_id') and dept['company_id'] != incident['company_id']:
                     return False, "Department does not belong to this company."
+                if not self.can_user_access_department(dept, incident.get('company_id'), assigned_by_user_id):
+                    return False, "Only department members can assign this department."
 
                 previous_department_id = incident.get('department_id')
                 previous_department_name = self._get_department_name(cursor, previous_department_id)

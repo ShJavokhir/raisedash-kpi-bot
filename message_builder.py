@@ -45,10 +45,17 @@ class MessageBuilder:
             f"{prompt_text}"
         )
 
-        buttons: List[InlineKeyboardButton] = [
-            InlineKeyboardButton(dept['name'], callback_data=f"{callback_prefix}:{incident['incident_id']}:{dept['department_id']}")
-            for dept in departments
-        ]
+        buttons: List[InlineKeyboardButton] = []
+        for dept in departments:
+            label = dept['name']
+            if (dept.get('metadata') or {}).get('restricted_to_department_members'):
+                label = f"🔒 {label}"
+            buttons.append(
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"{callback_prefix}:{incident['incident_id']}:{dept['department_id']}"
+                )
+            )
         rows = self._chunk_buttons(buttons, per_row=2)
 
         if back_callback_data:

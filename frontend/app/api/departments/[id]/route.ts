@@ -26,11 +26,17 @@ export async function GET(
       );
     }
 
+    const rawMetadata = parseJSON(department.metadata, {} as Record<string, any>);
+    const metadata = {
+      ...rawMetadata,
+      restricted_to_department_members: !!rawMetadata.restricted_to_department_members,
+    };
+
     return NextResponse.json({
       department_id: department.department_id,
       company_id: department.company_id,
       name: department.name,
-      metadata: parseJSON(department.metadata, {}),
+      metadata,
       created_at: department.created_at,
       updated_at: department.updated_at,
     });
@@ -57,6 +63,12 @@ export async function PUT(
     const body = await request.json();
 
     const { name, metadata } = body;
+    const normalizedMetadata = metadata
+      ? {
+          ...metadata,
+          restricted_to_department_members: !!metadata.restricted_to_department_members,
+        }
+      : null;
 
     // Verify department belongs to company
     const existing = db.prepare(`
@@ -78,7 +90,7 @@ export async function PUT(
         metadata = COALESCE(?, metadata),
         updated_at = datetime('now')
       WHERE department_id = ?
-    `).run(name, metadata ? JSON.stringify(metadata) : null, id);
+    `).run(name, normalizedMetadata ? JSON.stringify(normalizedMetadata) : null, id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

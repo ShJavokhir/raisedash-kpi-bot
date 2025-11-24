@@ -9,7 +9,10 @@ interface Department {
   name: string;
   created_at: string;
   updated_at: string;
-  metadata: any;
+  metadata: {
+    restricted_to_department_members?: boolean;
+    [key: string]: any;
+  };
   member_count: number;
 }
 
@@ -18,7 +21,13 @@ export default function DepartmentsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newDepartmentName, setNewDepartmentName] = useState('');
+  const [newDepartmentRestricted, setNewDepartmentRestricted] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
+  const [editDepartmentName, setEditDepartmentName] = useState('');
+  const [editRestricted, setEditRestricted] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     fetchDepartments();
@@ -30,7 +39,14 @@ export default function DepartmentsPage() {
       const response = await fetch('/api/departments');
       if (response.ok) {
         const data = await response.json();
-        setDepartments(data.departments);
+        const normalized = (data.departments || []).map((dept: Department) => ({
+          ...dept,
+          metadata: {
+            ...dept.metadata,
+            restricted_to_department_members: !!dept.metadata?.restricted_to_department_members,
+          },
+        }));
+        setDepartments(normalized);
       }
     } catch (error) {
       console.error('Error fetching departments:', error);
@@ -47,12 +63,16 @@ export default function DepartmentsPage() {
       const response = await fetch('/api/departments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newDepartmentName }),
+        body: JSON.stringify({
+          name: newDepartmentName,
+          metadata: { restricted_to_department_members: newDepartmentRestricted },
+        }),
       });
 
       if (response.ok) {
         setShowCreateModal(false);
         setNewDepartmentName('');
+        setNewDepartmentRestricted(false);
         fetchDepartments();
       } else {
         const data = await response.json();
@@ -62,6 +82,46 @@ export default function DepartmentsPage() {
       alert('An error occurred');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openEditModal = (department: Department) => {
+    setEditingDepartment(department);
+    setEditDepartmentName(department.name);
+    setEditRestricted(!!department.metadata?.restricted_to_department_members);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateDepartment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDepartment) return;
+
+    setSavingEdit(true);
+    try {
+      const response = await fetch(`/api/departments/${editingDepartment.department_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editDepartmentName,
+          metadata: {
+            ...editingDepartment.metadata,
+            restricted_to_department_members: editRestricted,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        setShowEditModal(false);
+        setEditingDepartment(null);
+        fetchDepartments();
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to update department');
+      }
+    } catch (error) {
+      alert('An error occurred');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -139,14 +199,28 @@ export default function DepartmentsPage() {
                   <p className="text-[10px] text-neutral-500 uppercase tracking-wide font-mono">
                     Created {formatDate(department.created_at)}
                   </p>
+                  {department.metadata?.restricted_to_department_members && (
+                    <p className="text-[10px] text-red-600 uppercase tracking-wider font-semibold mt-1">
+                      Restricted to department members
+                    </p>
+                  )}
                 </div>
-                <button
-                  onClick={() => handleDeleteDepartment(department.department_id)}
-                  className="p-1 text-neutral-400 hover:text-neutral-900 transition-colors"
-                  title="Delete department"
-                >
-                  <Trash2 className="h-3 w-3" strokeWidth={1} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openEditModal(department)}
+                    className="p-1 text-neutral-400 hover:text-neutral-900 transition-colors"
+                    title="Edit department"
+                  >
+                    <Edit className="h-3 w-3" strokeWidth={1} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteDepartment(department.department_id)}
+                    className="p-1 text-neutral-400 hover:text-neutral-900 transition-colors"
+                    title="Delete department"
+                  >
+                    <Trash2 className="h-3 w-3" strokeWidth={1} />
+                  </button>
+                </div>
               </div>
               <div className="pt-3 tech-border-t space-y-2">
                 <div className="flex items-center justify-between">
@@ -188,12 +262,29 @@ export default function DepartmentsPage() {
                   placeholder="OPERATIONS, SUPPORT, ETC."
                 />
               </div>
+              <label className="flex items-center gap-3 mb-6">
+                <input
+                  type="checkbox"
+                  checked={newDepartmentRestricted}
+                  onChange={(e) => setNewDepartmentRestricted(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-neutral-700 font-semibold">
+                    Restrict to department members
+                  </p>
+                  <p className="text-[10px] text-neutral-500 font-mono">
+                    Only users in company departments can route tickets here.
+                  </p>
+                </div>
+              </label>
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => {
                     setShowCreateModal(false);
                     setNewDepartmentName('');
+                    setNewDepartmentRestricted(false);
                   }}
                   className="tech-button"
                   disabled={creating}
@@ -206,6 +297,69 @@ export default function DepartmentsPage() {
                   className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50"
                 >
                   {creating ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit department modal */}
+      {showEditModal && editingDepartment && (
+        <div className="fixed inset-0 bg-neutral-900 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="tech-border bg-white p-6 max-w-md w-full m-4">
+            <div className="section-header mb-6">
+              <div className="section-tag">Edit Department</div>
+            </div>
+            <form onSubmit={handleUpdateDepartment}>
+              <div className="mb-6">
+                <label htmlFor="edit-department-name" className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                  Department Name
+                </label>
+                <input
+                  id="edit-department-name"
+                  type="text"
+                  required
+                  value={editDepartmentName}
+                  onChange={(e) => setEditDepartmentName(e.target.value)}
+                  className="tech-input w-full"
+                  placeholder="OPERATIONS, SUPPORT, ETC."
+                />
+              </div>
+              <label className="flex items-center gap-3 mb-6">
+                <input
+                  type="checkbox"
+                  checked={editRestricted}
+                  onChange={(e) => setEditRestricted(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-neutral-700 font-semibold">
+                    Restrict to department members
+                  </p>
+                  <p className="text-[10px] text-neutral-500 font-mono">
+                    Only verified department members can assign tickets to this team.
+                  </p>
+                </div>
+              </label>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingDepartment(null);
+                  }}
+                  className="tech-button"
+                  disabled={savingEdit}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50"
+                >
+                  {savingEdit ? 'Saving...' : 'Save changes'}
                 </button>
               </div>
             </form>

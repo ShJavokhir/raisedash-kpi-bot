@@ -3,47 +3,23 @@ import { getDatabase, parseJSON, type User } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 
 /**
- * GET /api/users - List all users associated with the company
+ * GET /api/users - List all users
  */
 export async function GET(request: NextRequest) {
   try {
     const session = await requireAuth();
     const db = getDatabase();
 
-    // Get all users who are connected to this company through:
-    // 1. Department membership
-    // 2. Group connections (groups attached to this company)
-    // 3. Incident creation/claiming
+    // Get all users and relevant department memberships, no company filter
     const users = db.prepare(`
-      SELECT DISTINCT
+      SELECT
         u.*,
         GROUP_CONCAT(DISTINCT dm.department_id) as department_ids
       FROM users u
       LEFT JOIN department_members dm ON u.user_id = dm.user_id
-      LEFT JOIN departments d ON dm.department_id = d.department_id
-      WHERE
-        -- Users in departments of this company
-        d.company_id = ?
-        OR
-        -- Users who created or claimed incidents for this company
-        u.user_id IN (
-          SELECT DISTINCT created_by_id FROM incidents WHERE company_id = ?
-          UNION
-          SELECT DISTINCT user_id FROM incident_claims ic
-          JOIN incidents i ON ic.incident_id = i.incident_id
-          WHERE i.company_id = ?
-        )
-        OR
-        -- Users connected to groups that belong to this company
-        u.user_id IN (
-          SELECT DISTINCT u2.user_id
-          FROM users u2, json_each(u2.group_connections) AS gc
-          JOIN groups g ON gc.value = g.group_id
-          WHERE g.company_id = ? AND g.status = 'active'
-        )
       GROUP BY u.user_id
       ORDER BY u.first_name, u.last_name
-    `).all(session.companyId, session.companyId, session.companyId, session.companyId) as any[];
+    `).all() as any[];
 
     const formattedUsers = users.map(user => ({
       user_id: user.user_id,

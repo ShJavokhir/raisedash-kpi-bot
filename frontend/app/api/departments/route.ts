@@ -18,6 +18,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       departments: departments.map(dept => {
+        const rawMetadata = parseJSON(dept.metadata, {} as Record<string, any>);
+        const metadata = {
+          ...rawMetadata,
+          restricted_to_department_members: !!rawMetadata.restricted_to_department_members,
+        };
+
         // Count members for this department
         const memberCountResult = db.prepare(`
           SELECT COUNT(*) as member_count
@@ -29,7 +35,7 @@ export async function GET(request: NextRequest) {
           department_id: dept.department_id,
           company_id: dept.company_id,
           name: dept.name,
-          metadata: parseJSON(dept.metadata, {}),
+          metadata,
           created_at: dept.created_at,
           updated_at: dept.updated_at,
           member_count: memberCountResult.member_count || 0,
@@ -55,6 +61,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     const { name, metadata } = body;
+    const normalizedMetadata = {
+      ...(metadata || {}),
+      restricted_to_department_members: !!metadata?.restricted_to_department_members,
+    };
 
     if (!name) {
       return NextResponse.json(
@@ -83,7 +93,7 @@ export async function POST(request: NextRequest) {
     `).run(
       session.companyId,
       name,
-      JSON.stringify(metadata || {}),
+      JSON.stringify(normalizedMetadata),
       now,
       now
     );
