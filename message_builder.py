@@ -230,12 +230,33 @@ class MessageBuilder:
 
     @staticmethod
     def build_department_ping(department_handles: List[str], incident_id: str,
-                              shift: Optional[str] = None) -> str:
-        """Build message tagging department members when assigned."""
-        mentions = " ".join(department_handles)
+                              shift: Optional[str] = None) -> List[str]:
+        """
+        Build message(s) tagging department members when assigned.
+
+        Telegram limits mentions to 5 per message, so we chunk handles to stay under the cap.
+        """
+        if not department_handles:
+            return []
+
+        # Remove duplicates while preserving order to avoid redundant pings.
+        seen = set()
+        unique_handles: List[str] = []
+        for handle in department_handles:
+            if handle and handle not in seen:
+                unique_handles.append(handle)
+                seen.add(handle)
+
         shift_line = f"Shift: {shift}\n" if shift else ""
-        return (
-            f"🔔 {mentions}\n"
-            f"{shift_line}"
-            f"Please review ticket {incident_id} and join if you are taking ownership."
-        )
+        messages: List[str] = []
+        chunk_size = 5
+
+        for i in range(0, len(unique_handles), chunk_size):
+            mentions = " ".join(unique_handles[i:i + chunk_size])
+            messages.append(
+                f"🔔 {mentions}\n"
+                f"{shift_line}"
+                f"Please review ticket {incident_id} and join if you are taking ownership."
+            )
+
+        return messages

@@ -152,9 +152,12 @@ export async function GET(request: NextRequest) {
     `).all(...baseParams, ...filterParams) as any[];
 
     // 5. Backlog Analysis (cumulative over time)
+    // Create timeGrouping without alias for CTE
+    const timeGroupingNoAlias = timeGrouping.replace(/i\./g, '');
+
     const backlogAnalysis = db.prepare(`
       WITH date_series AS (
-        SELECT DISTINCT ${timeGrouping} as time_period
+        SELECT DISTINCT ${timeGroupingNoAlias} as time_period
         FROM incidents
         WHERE company_id = ?
           AND t_created BETWEEN ? AND ?
@@ -190,10 +193,10 @@ export async function GET(request: NextRequest) {
       FROM date_series ds
       ORDER BY ds.time_period ASC
     `).all(
-      ...baseParams,
-      ...baseParams, ...filterParams,
-      ...baseParams, ...filterParams,
-      ...baseParams, ...filterParams
+      session.companyId, startDate, endDate,
+      session.companyId, ...filterParams,
+      session.companyId, ...filterParams,
+      session.companyId, ...filterParams
     ) as any[];
 
     // 6. Creation vs Resolution Rate

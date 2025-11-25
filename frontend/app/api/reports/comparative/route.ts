@@ -21,18 +21,37 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     // Parse query parameters
-    const period1StartDate = searchParams.get('period1StartDate');
-    const period1EndDate = searchParams.get('period1EndDate');
-    const period2StartDate = searchParams.get('period2StartDate');
-    const period2EndDate = searchParams.get('period2EndDate');
+    let period1StartDate = searchParams.get('period1StartDate');
+    let period1EndDate = searchParams.get('period1EndDate');
+    let period2StartDate = searchParams.get('period2StartDate');
+    let period2EndDate = searchParams.get('period2EndDate');
     const timezone = searchParams.get('timezone') || 'UTC';
     const departmentIds = searchParams.get('departmentIds')?.split(',').filter(Boolean);
     const groupIds = searchParams.get('groupIds')?.split(',').filter(Boolean);
 
+    // Support simplified parameters: if startDate/endDate provided, auto-calculate periods
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+
+    if (startDate && endDate && (!period1StartDate || !period1EndDate)) {
+      // Auto-calculate two equal periods for comparison
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const durationMs = end.getTime() - start.getTime();
+
+      // Period 2 (current): use provided dates
+      period2StartDate = startDate;
+      period2EndDate = endDate;
+
+      // Period 1 (previous): same duration before period 2
+      period1EndDate = new Date(start.getTime() - 1).toISOString();
+      period1StartDate = new Date(start.getTime() - durationMs).toISOString();
+    }
+
     // Validate required parameters
     if (!period1StartDate || !period1EndDate || !period2StartDate || !period2EndDate) {
       return NextResponse.json(
-        { error: 'All period date ranges are required' },
+        { error: 'Either provide all period dates (period1StartDate, period1EndDate, period2StartDate, period2EndDate) or simplified dates (startDate, endDate)' },
         { status: 400 }
       );
     }

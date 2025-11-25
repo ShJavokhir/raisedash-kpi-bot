@@ -1239,12 +1239,13 @@ class BotHandlers:
             )
             if handles:
                 logger.info(f"Pinging {len(handles)} department members")
-                ping = self.message_builder.build_department_ping(handles, incident_id, shift)
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=ping,
-                    reply_to_message_id=query.message.message_id
-                )
+                pings = self.message_builder.build_department_ping(handles, incident_id, shift)
+                for ping in pings:
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text=ping,
+                        reply_to_message_id=query.message.message_id
+                    )
             else:
                 logger.warning(
                     f"No department members to ping for group {incident.get('group_id')} "
@@ -1367,12 +1368,13 @@ class BotHandlers:
             incident.get('group_id'), department_id, shift
         )
         if handles:
-            ping = self.message_builder.build_department_ping(handles, incident_id, shift)
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text=ping,
-                reply_to_message_id=query.message.message_id
-            )
+            pings = self.message_builder.build_department_ping(handles, incident_id, shift)
+            for ping in pings:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=ping,
+                    reply_to_message_id=query.message.message_id
+                )
         else:
             logger.warning(
                 f"No department members to ping for group {incident.get('group_id')} "
