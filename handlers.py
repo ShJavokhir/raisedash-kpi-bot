@@ -17,6 +17,7 @@ from config import Config
 from reporting import KPIReportGenerator, html_to_bytes
 from sentry_config import SentryConfig
 from logging_config import set_log_context, clear_log_context, LogContext
+from time_utils import get_current_shift
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,17 @@ class BotHandlers:
             username=user.username if user else None
         ):
             logger.info(f"Callback: {callback_data}")
+
+    def _get_active_shift(self) -> str:
+        """Determine the current shift label based on server time and config."""
+        try:
+            return get_current_shift(
+                day_start_hour=Config.SHIFT_DAY_START_HOUR,
+                night_start_hour=Config.SHIFT_NIGHT_START_HOUR
+            )
+        except ValueError as exc:
+            logger.error(f"Invalid shift configuration, defaulting to DAY: {exc}")
+            return "DAY"
 
     def _get_user_handle(self, user) -> str:
         """Get user's handle with @ prefix."""
@@ -1204,7 +1216,7 @@ class BotHandlers:
             logger.info(f"Assigning incident to department")
             success, message = self.db.assign_incident_department(incident_id, department_id, user.id)
             if not success:
-                logger.error(f"Failed to assign department: {message}")
+                logger.warning(f"Department assignment validation failed: {message}")
                 await query.answer(message, show_alert=True)
                 return
 
@@ -1221,17 +1233,23 @@ class BotHandlers:
             )
             await query.answer("Department selected")
 
-            handles = self.db.get_department_handles(department_id)
+            shift = self._get_active_shift()
+            handles = self.db.get_group_department_handles(
+                incident.get('group_id'), department_id, shift
+            )
             if handles:
                 logger.info(f"Pinging {len(handles)} department members")
-                ping = self.message_builder.build_department_ping(handles, incident_id)
+                ping = self.message_builder.build_department_ping(handles, incident_id, shift)
                 await context.bot.send_message(
                     chat_id=chat.id,
                     text=ping,
                     reply_to_message_id=query.message.message_id
                 )
             else:
-                logger.warning(f"No department members to ping")
+                logger.warning(
+                    f"No department members to ping for group {incident.get('group_id')} "
+                    f"dept {department_id} shift {shift}"
+                )
 
     async def _handle_change_department(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
         """Prompt department change options."""
@@ -1344,13 +1362,21 @@ class BotHandlers:
         )
         await query.answer("Department updated")
 
-        handles = self.db.get_department_handles(department_id)
+        shift = self._get_active_shift()
+        handles = self.db.get_group_department_handles(
+            incident.get('group_id'), department_id, shift
+        )
         if handles:
-            ping = self.message_builder.build_department_ping(handles, incident_id)
+            ping = self.message_builder.build_department_ping(handles, incident_id, shift)
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=ping,
                 reply_to_message_id=query.message.message_id
+            )
+        else:
+            logger.warning(
+                f"No department members to ping for group {incident.get('group_id')} "
+                f"dept {department_id} shift {shift}"
             )
 
     async def _handle_claim(self, query, user, chat, incident_id: str):
@@ -1379,7 +1405,7 @@ class BotHandlers:
             logger.info(f"Claiming incident for user {user.id} ({self._get_user_handle(user)})")
             success, message = self.db.claim_incident(incident_id, user.id)
             if not success:
-                logger.error(f"Failed to claim incident: {message}")
+                logger.warning(f"Incident claim validation failed: {message}")
                 await query.answer(message, show_alert=True)
                 return
 
@@ -1447,7 +1473,7 @@ class BotHandlers:
                     logger.error(f"Error editing message for {incident_id}: {e}")
                     await query.answer("Released, but couldn't update message.", show_alert=True)
             else:
-                logger.error(f"Failed to release claim: {message}")
+                logger.warning(f"Claim release validation failed: {message}")
                 await query.answer(message, show_alert=True)
 
     async def _handle_resolve(self, query, user, chat, incident_id: str, context: ContextTypes.DEFAULT_TYPE):
@@ -1483,7 +1509,7 @@ class BotHandlers:
 
                 await query.answer("Please reply to the bot's message with your summary")
             else:
-                logger.error(f"Failed to request resolution: {message}")
+                logger.warning(f"Resolution request validation failed: {message}")
                 await query.answer(message, show_alert=True)
 
     # ==================== Message Handler for Resolution Summary ====================

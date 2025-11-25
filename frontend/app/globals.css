@@ -121,12 +121,13 @@ th {
 .tech-button {
   border: 1px solid var(--border);
   background-color: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
   padding: 0.375rem 0.75rem;
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
   cursor: pointer;
 }
 

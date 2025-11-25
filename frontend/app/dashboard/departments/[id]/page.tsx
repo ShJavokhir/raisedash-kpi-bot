@@ -342,7 +342,7 @@ export default function DepartmentMembersPage() {
                           key={user.user_id}
                           className={`flex items-center p-3 cursor-pointer transition-colors ${
                             selectedUserId === String(user.user_id)
-                              ? 'bg-neutral-900 text-white'
+                              ? '!bg-neutral-900 !text-white'
                               : 'hover:bg-subtle'
                           }`}
                         >
@@ -364,14 +364,14 @@ export default function DepartmentMembersPage() {
                             </div>
                             <div className="ml-3 min-w-0 flex-1">
                               <div className={`text-sm font-semibold truncate ${
-                                selectedUserId === String(user.user_id) ? 'text-white' : 'text-neutral-900'
+                                selectedUserId === String(user.user_id) ? '!text-white' : 'text-neutral-900'
                               }`}>
                                 {user.first_name || user.last_name
                                   ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
                                   : `User ${user.user_id}`}
                               </div>
                               <div className={`text-xs font-mono truncate ${
-                                selectedUserId === String(user.user_id) ? 'text-neutral-300' : 'text-neutral-500'
+                                selectedUserId === String(user.user_id) ? '!text-neutral-300' : 'text-neutral-500'
                               }`}>
                                 {user.username || `ID: ${user.user_id}`}
                               </div>
@@ -401,7 +401,7 @@ export default function DepartmentMembersPage() {
                 <button
                   type="submit"
                   disabled={adding || !selectedUserId}
-                  className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {adding ? 'Adding...' : 'Add Member'}
                 </button>

@@ -294,7 +294,7 @@ export default function DepartmentsPage() {
                 <button
                   type="submit"
                   disabled={creating}
-                  className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50"
+                  className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {creating ? 'Creating...' : 'Create'}
                 </button>
@@ -357,7 +357,7 @@ export default function DepartmentsPage() {
                 <button
                   type="submit"
                   disabled={savingEdit}
-                  className="tech-button bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-50"
+                  className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {savingEdit ? 'Saving...' : 'Save changes'}
                 </button>

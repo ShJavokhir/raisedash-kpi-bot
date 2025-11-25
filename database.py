@@ -126,6 +126,21 @@ class Database:
             )
         """)
 
+        # Group membership table (department-scoped)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id INTEGER NOT NULL,
+                department_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                shift TEXT NOT NULL CHECK(shift IN ('DAY', 'NIGHT')),
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (group_id, department_id, user_id, shift),
+                FOREIGN KEY (group_id) REFERENCES groups(group_id),
+                FOREIGN KEY (department_id) REFERENCES departments(department_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # Incidents table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS incidents (
@@ -305,6 +320,14 @@ class Database:
             ON department_members(user_id)
         """)
         cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_group_members_lookup
+            ON group_members(group_id, department_id, shift)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_group_members_user
+            ON group_members(user_id)
+        """)
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_department_sessions_incident
             ON incident_department_sessions(incident_id)
         """)
@@ -375,6 +398,27 @@ class Database:
                 PRIMARY KEY (department_id, user_id),
                 FOREIGN KEY (department_id) REFERENCES departments(department_id)
             )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id INTEGER NOT NULL,
+                department_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                shift TEXT NOT NULL CHECK(shift IN ('DAY', 'NIGHT')),
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (group_id, department_id, user_id, shift),
+                FOREIGN KEY (group_id) REFERENCES groups(group_id),
+                FOREIGN KEY (department_id) REFERENCES departments(department_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_group_members_lookup
+            ON group_members(group_id, department_id, shift)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_group_members_user
+            ON group_members(user_id)
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS incident_department_sessions (
@@ -1644,8 +1688,101 @@ class Database:
         handles: List[str] = []
         for user_id in member_ids:
             user = self.get_user(user_id)
-            handle = (user.get('telegram_handle') if user else None) or f"User_{user_id}"
-            handles.append(handle)
+            handle = None
+            if user:
+                handle = user.get('telegram_handle') or (
+                    f"@{user['username']}" if user.get('username') else None
+                )
+            handles.append(handle or f"User_{user_id}")
+        return handles
+
+    @staticmethod
+    def _normalize_shift_value(shift: Optional[str]) -> Optional[str]:
+        """Normalize shift strings to DAY/NIGHT and validate input."""
+        if shift is None:
+            return None
+        normalized = (shift or "").strip().upper()
+        if normalized not in ('DAY', 'NIGHT'):
+            raise ValueError("Shift must be 'DAY' or 'NIGHT'")
+        return normalized
+
+    def add_member_to_group(self, group_id: int, department_id: int,
+                            user_id: int, shift: str):
+        """Assign a department member to a specific group and shift."""
+        normalized_shift = self._normalize_shift_value(shift)
+        if normalized_shift is None:
+            raise ValueError("Shift is required when adding a group member")
+
+        # Ensure the user actually belongs to the department to avoid stale mappings
+        if not self.is_user_in_department(department_id, user_id):
+            raise ValueError(f"User {user_id} is not a member of department {department_id}")
+
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR IGNORE INTO group_members (
+                        group_id, department_id, user_id, shift, added_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                """, (group_id, department_id, user_id, normalized_shift, utc_iso_now()))
+                logger.info(f"Added user {user_id} to group {group_id} for department {department_id} ({normalized_shift})")
+
+    def remove_member_from_group(self, group_id: int, department_id: int,
+                                 user_id: int, shift: Optional[str] = None):
+        """Remove a group assignment for a user, optionally scoped to a shift."""
+        normalized_shift = self._normalize_shift_value(shift)
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                if normalized_shift:
+                    cursor.execute("""
+                        DELETE FROM group_members
+                        WHERE group_id = ? AND department_id = ? AND user_id = ? AND shift = ?
+                    """, (group_id, department_id, user_id, normalized_shift))
+                else:
+                    cursor.execute("""
+                        DELETE FROM group_members
+                        WHERE group_id = ? AND department_id = ? AND user_id = ?
+                    """, (group_id, department_id, user_id))
+                logger.info(f"Removed user {user_id} from group {group_id} for department {department_id} (shift={normalized_shift or 'any'})")
+
+    def get_group_department_member_ids(self, group_id: int, department_id: int,
+                                        shift: Optional[str] = None) -> List[int]:
+        """Return member IDs for a department scoped to a group and optional shift."""
+        normalized_shift = self._normalize_shift_value(shift)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if normalized_shift:
+                cursor.execute("""
+                    SELECT user_id FROM group_members
+                    WHERE group_id = ? AND department_id = ? AND shift = ?
+                """, (group_id, department_id, normalized_shift))
+            else:
+                cursor.execute("""
+                    SELECT user_id FROM group_members
+                    WHERE group_id = ? AND department_id = ?
+                """, (group_id, department_id))
+            return [int(row['user_id']) for row in cursor.fetchall()]
+
+    def get_group_department_handles(self, group_id: int, department_id: int,
+                                     shift: Optional[str] = None) -> List[str]:
+        """
+        Return handles for department members assigned to a specific group/shift.
+
+        If a shift is provided, only members with that shift are returned. If no
+        group-level assignments exist, an empty list is returned (no fallback to
+        the entire department to avoid cross-group paging).
+        """
+        member_ids = self.get_group_department_member_ids(group_id, department_id, shift)
+        handles: List[str] = []
+        for user_id in member_ids:
+            user = self.get_user(user_id)
+            handle = None
+            if user:
+                handle = user.get('telegram_handle') or (
+                    f"@{user['username']}" if user.get('username') else None
+                )
+            handles.append(handle or f"User_{user_id}")
         return handles
 
     def is_user_company_department_member(self, company_id: Optional[int], user_id: int) -> bool:

@@ -229,10 +229,13 @@ class MessageBuilder:
         )
 
     @staticmethod
-    def build_department_ping(department_handles: List[str], incident_id: str) -> str:
+    def build_department_ping(department_handles: List[str], incident_id: str,
+                              shift: Optional[str] = None) -> str:
         """Build message tagging department members when assigned."""
         mentions = " ".join(department_handles)
+        shift_line = f"Shift: {shift}\n" if shift else ""
         return (
             f"🔔 {mentions}\n"
+            f"{shift_line}"
             f"Please review ticket {incident_id} and join if you are taking ownership."
         )

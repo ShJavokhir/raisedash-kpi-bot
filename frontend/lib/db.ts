@@ -183,6 +183,14 @@ export interface IncidentDepartmentSession {
   metadata: string; // JSON object
 }
 
+export interface GroupMember {
+  group_id: number;
+  department_id: number;
+  user_id: number;
+  shift: 'DAY' | 'NIGHT';
+  added_at: string;
+}
+
 // Helper functions for parsing JSON fields
 
 export function parseJSON<T = any>(jsonString: string | null, defaultValue: T = [] as T): T {

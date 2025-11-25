@@ -187,7 +187,7 @@ export default function ReportsPage() {
               <button
                 key={type.value}
                 onClick={() => setReportType(type.value as ReportType)}
-                className={`p-3 text-left transition-all ${isActive ? 'bg-neutral-900 text-white' : 'tech-border bg-white hover:bg-neutral-50'}`}
+                className={`p-3 text-left transition-all tech-border ${isActive ? '!bg-neutral-900 !text-white' : 'bg-white hover:bg-neutral-50'}`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <Icon className="h-4 w-4" strokeWidth={1} />
@@ -207,7 +207,7 @@ export default function ReportsPage() {
             <DateRangeSelector value={dateRange} timezone={timezone} onChange={handleDateRangeChange} showTimezone={true} />
           </div>
 
-          <button onClick={() => setShowFilters(!showFilters)} className={`tech-button flex items-center gap-2 ${showFilters ? 'bg-neutral-900 text-white' : ''}`}>
+          <button onClick={() => setShowFilters(!showFilters)} className={`tech-button flex items-center gap-2 ${showFilters ? '!bg-neutral-900 !text-white' : ''}`}>
             <Filter className="h-3 w-3" strokeWidth={1} />
             Filters
             {activeFiltersCount > 0 && <span className="px-1.5 py-0.5 bg-white text-neutral-900 text-[10px] rounded-full font-bold">{activeFiltersCount}</span>}
