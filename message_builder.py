@@ -144,7 +144,7 @@ class MessageBuilder:
             "Ticket:\n"
             f"{description}\n"
             "------------------------------\n"
-            f"{resolver}, please reply to this message with a short resolution summary (1–3 sentences)."
+            f"{resolver}, please reply to this message with a short resolution summary (1-3 sentences)."
         )
         return text, None
 
@@ -230,7 +230,7 @@ class MessageBuilder:
 
     @staticmethod
     def build_department_ping(department_handles: List[str], incident_id: str,
-                              shift: Optional[str] = None) -> List[str]:
+                              availability_note: Optional[str] = None) -> List[str]:
         """
         Build message(s) tagging department members when assigned.
 
@@ -247,7 +247,7 @@ class MessageBuilder:
                 unique_handles.append(handle)
                 seen.add(handle)
 
-        shift_line = f"Shift: {shift}\n" if shift else ""
+        availability_line = f"{availability_note}\n" if availability_note else ""
         messages: List[str] = []
         chunk_size = 5
 
@@ -255,7 +255,7 @@ class MessageBuilder:
             mentions = " ".join(unique_handles[i:i + chunk_size])
             messages.append(
                 f"🔔 {mentions}\n"
-                f"{shift_line}"
+                f"{availability_line}"
                 f"Please review ticket {incident_id} and join if you are taking ownership."
             )
 

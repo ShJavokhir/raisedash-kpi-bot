@@ -30,10 +30,6 @@ class Config:
     SLA_ESCALATION_NUDGE_MINUTES = int(os.getenv('SLA_ESCALATION_NUDGE_MINUTES', '15'))
     SLA_SUMMARY_TIMEOUT_MINUTES = int(os.getenv('SLA_SUMMARY_TIMEOUT_MINUTES', '10'))
 
-    # Shift boundaries (local server time)
-    SHIFT_DAY_START_HOUR = int(os.getenv('SHIFT_DAY_START_HOUR', '7'))
-    SHIFT_NIGHT_START_HOUR = int(os.getenv('SHIFT_NIGHT_START_HOUR', '19'))
-
     # Issue context capture window (in minutes)
     ISSUE_CONTEXT_WINDOW_MINUTES = int(os.getenv('ISSUE_CONTEXT_WINDOW_MINUTES', '3'))
     ISSUE_CONTEXT_MESSAGE_LIMIT = int(os.getenv('ISSUE_CONTEXT_MESSAGE_LIMIT', '3'))
@@ -68,19 +64,6 @@ class Config:
                 "PLATFORM_ADMIN_IDS is required. "
                 "Provide a comma-separated list of Telegram user IDs."
             )
-        cls._validate_shift_hours()
-
-    @classmethod
-    def _validate_shift_hours(cls):
-        """Ensure shift hours are sane to prevent invalid tagging windows."""
-        for name, value in (
-            ("SHIFT_DAY_START_HOUR", cls.SHIFT_DAY_START_HOUR),
-            ("SHIFT_NIGHT_START_HOUR", cls.SHIFT_NIGHT_START_HOUR),
-        ):
-            if value < 0 or value > 23:
-                raise ValueError(f"{name} must be between 0 and 23. Current value: {value}")
-        if cls.SHIFT_DAY_START_HOUR == cls.SHIFT_NIGHT_START_HOUR:
-            raise ValueError("SHIFT_DAY_START_HOUR and SHIFT_NIGHT_START_HOUR cannot be the same.")
 
     @classmethod
     def get_sla_unclaimed_seconds(cls) -> int:

@@ -32,9 +32,34 @@ interface GroupAssignment {
   group_name: string;
   department_id: number;
   department_name: string;
-  shift: 'DAY' | 'NIGHT';
+  schedule: Array<{
+    day: string;
+    enabled: boolean;
+    start_time: string;
+    end_time: string;
+  }>;
   added_at: string;
 }
+
+type DayName = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+
+interface DaySchedule {
+  day: DayName;
+  enabled: boolean;
+  start_time: string;
+  end_time: string;
+}
+
+const DAY_ORDER: DayName[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const DAY_LABEL: Record<DayName, string> = {
+  monday: 'Mon',
+  tuesday: 'Tue',
+  wednesday: 'Wed',
+  thursday: 'Thu',
+  friday: 'Fri',
+  saturday: 'Sat',
+  sunday: 'Sun',
+};
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserData[]>([]);
@@ -64,7 +89,7 @@ export default function UsersPage() {
   const [groupSearch, setGroupSearch] = useState('');
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
-  const [selectedShifts, setSelectedShifts] = useState<Array<'DAY' | 'NIGHT'>>(['DAY']);
+  const [schedule, setSchedule] = useState<DaySchedule[]>([]);
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
@@ -138,6 +163,57 @@ export default function UsersPage() {
     setSearchQuery('');
     setRoleFilter('all');
     setDepartmentFilter('all');
+  };
+
+  const parseHHMM = (value: string): number | null => {
+    if (!value) return null;
+    const parts = value.trim().split(':');
+    if (parts.length !== 2) return null;
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+    if (
+      Number.isNaN(hours) ||
+      Number.isNaN(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return null;
+    }
+    return hours * 60 + minutes;
+  };
+
+  const buildDefaultSchedule = (): DaySchedule[] =>
+    DAY_ORDER.map((day) => ({
+      day,
+      enabled: true,
+      start_time: '07:00',
+      end_time: '19:00',
+    }));
+
+  const summarizeSchedule = (entries: DaySchedule[]): string => {
+    const enabled = entries.filter((d) => d.enabled);
+    if (enabled.length === 0) return 'Disabled';
+    return enabled
+      .map((d) => `${DAY_LABEL[d.day]} ${d.start_time}-${d.end_time}`)
+      .join(', ');
+  };
+
+  const toggleDay = (day: DayName) => {
+    setSchedule((prev) =>
+      prev.map((entry) =>
+        entry.day === day ? { ...entry, enabled: !entry.enabled } : entry
+      )
+    );
+  };
+
+  const updateDayTime = (day: DayName, field: 'start_time' | 'end_time', value: string) => {
+    setSchedule((prev) =>
+      prev.map((entry) =>
+        entry.day === day ? { ...entry, [field]: value } : entry
+      )
+    );
   };
 
   const getUserDisplayName = (user: UserData) => {
@@ -216,7 +292,7 @@ export default function UsersPage() {
     setGroupSearch('');
     setSelectedGroupIds([]);
     setSelectedDepartmentId('');
-    setSelectedShifts(['DAY']);
+    setSchedule(buildDefaultSchedule());
     setAssignError(null);
     setShowAssignGroupModal(true);
     fetchGroupAssignments(user.user_id);
@@ -229,7 +305,7 @@ export default function UsersPage() {
     setGroupSearch('');
     setSelectedGroupIds([]);
     setSelectedDepartmentId('');
-    setSelectedShifts(['DAY']);
+    setSchedule(buildDefaultSchedule());
   };
 
   const toggleGroupSelection = (groupId: string) => {
@@ -240,27 +316,35 @@ export default function UsersPage() {
     );
   };
 
-  const toggleShift = (shift: 'DAY' | 'NIGHT') => {
-    setSelectedShifts((prev) =>
-      prev.includes(shift)
-        ? prev.filter((s) => s !== shift)
-        : [...prev, shift]
-    );
-  };
-
   const handleAddGroupAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assignUser || selectedGroupIds.length === 0 || !selectedDepartmentId || selectedShifts.length === 0) return;
+    if (!assignUser || selectedGroupIds.length === 0 || !selectedDepartmentId) return;
+
+    const enabledDays = schedule.filter((day) => day.enabled);
+    if (enabledDays.length === 0) {
+      setAssignError('Enable at least one day.');
+      return;
+    }
+
+    for (const day of enabledDays) {
+      const start = parseHHMM(day.start_time);
+      const end = parseHHMM(day.end_time);
+      if (start === null || end === null) {
+        setAssignError('Provide start and end times in HH:MM (00:00-23:59) for all enabled days.');
+        return;
+      }
+      if (start === end) {
+        setAssignError('Start and end times cannot be identical. Use 00:00-23:59 for 24/7 coverage.');
+        return;
+      }
+    }
 
     setSavingAssignment(true);
     setAssignError(null);
     try {
-      const payloads = selectedGroupIds.flatMap((groupId) =>
-        selectedShifts.map((shift) => ({
-          group_id: parseInt(groupId),
-          shift,
-        }))
-      );
+      const payloads = selectedGroupIds.map((groupId) => ({
+        group_id: parseInt(groupId),
+      }));
 
       const errors: string[] = [];
       for (const payload of payloads) {
@@ -271,13 +355,13 @@ export default function UsersPage() {
             user_id: assignUser.user_id,
             group_id: payload.group_id,
             department_id: parseInt(selectedDepartmentId),
-            shift: payload.shift,
+            schedule,
           }),
         });
 
         if (!response.ok) {
           const data = await response.json();
-          errors.push(data.error || `Failed for group ${payload.group_id} (${payload.shift})`);
+          errors.push(data.error || `Failed for group ${payload.group_id}`);
         }
       }
 
@@ -303,7 +387,6 @@ export default function UsersPage() {
       user_id: String(assignUser.user_id),
       group_id: String(assignment.group_id),
       department_id: String(assignment.department_id),
-      shift: assignment.shift,
     });
 
     try {
@@ -648,230 +731,248 @@ export default function UsersPage() {
       {showAssignGroupModal && assignUser && (
         <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={closeAssignGroupModal}>
           <div
-            className="tech-card tech-border bg-white p-6 max-w-5xl w-full max-h-[85vh] overflow-y-auto"
+            className="tech-card tech-border bg-white w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl rounded-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between mb-4">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between shrink-0 bg-white">
               <div>
-                <h3 className="text-sm font-bold tracking-wider text-neutral-900">{getUserDisplayName(assignUser)}</h3>
-                <p className="text-[10px] text-neutral-500 uppercase tracking-wider mt-1">
-                  Group Assignments ({assignmentList.length})
-                </p>
+                <h3 className="text-lg font-bold tracking-tight text-neutral-900">{getUserDisplayName(assignUser)}</h3>
+                <p className="text-xs text-neutral-500 font-medium">Manage Group Assignments</p>
               </div>
               <button
                 onClick={closeAssignGroupModal}
-                className="tech-button p-1"
+                className="p-2 hover:bg-neutral-100 rounded-full transition-colors text-neutral-500 hover:text-neutral-900"
                 aria-label="Close modal"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            {assignError && (
-              <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded">
-                {assignError}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Assignment form */}
-              <form onSubmit={handleAddGroupAssignment} className="space-y-4">
-                <div className="section-tag mb-3">Add Assignment</div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                      Department (must match membership)
-                    </label>
-                    <select
-                      value={selectedDepartmentId}
-                      onChange={(e) => setSelectedDepartmentId(e.target.value)}
-                      className="tech-input w-full"
-                      required
-                      disabled={userDepartments.length === 0}
-                    >
-                      <option value="">Select department...</option>
-                      {userDepartments.map((dept) => (
-                        <option key={dept.department_id} value={dept.department_id}>
-                          {dept.name}
-                        </option>
-                      ))}
-                    </select>
-                    {userDepartments.length === 0 && (
-                      <p className="text-[10px] text-red-600 mt-1">
-                        User must be added to a department before assigning to a group.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                      Shifts (choose one or both)
-                    </label>
-                    <div className="flex gap-3">
-                      {(['DAY', 'NIGHT'] as Array<'DAY' | 'NIGHT'>).map((shift) => {
-                        const active = selectedShifts.includes(shift);
-                        return (
-                          <label key={shift} className={`flex items-center gap-2 px-3 py-2 tech-border cursor-pointer ${
-                            active ? '!bg-neutral-900 !text-white' : 'bg-white'
-                          }`}>
-                            <input
-                              type="checkbox"
-                              name="shift"
-                              value={shift}
-                              checked={active}
-                              onChange={() => toggleShift(shift)}
-                            />
-                            <span className="text-xs font-semibold">{shift}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                    Search Groups
-                  </label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
-                    <input
-                      type="text"
-                      value={groupSearch}
-                      onChange={(e) => setGroupSearch(e.target.value)}
-                      placeholder="Name or ID..."
-                      className="tech-input w-full pl-10"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                    Select Groups ({filteredGroupOptions.length} available)
-                  </label>
-                  <div className="tech-border bg-white max-h-64 overflow-y-auto custom-scrollbar">
-                    {filteredGroupOptions.length === 0 ? (
-                      <div className="p-4 text-xs text-neutral-500">No matching groups</div>
-                    ) : (
-                      <div className="divide-y divide-neutral-200">
-                        {filteredGroupOptions.map((group) => {
-                          const active = selectedGroupIds.includes(String(group.group_id));
-                          return (
-                            <label
-                              key={group.group_id}
-                              className={`flex items-center justify-between p-3 cursor-pointer ${
-                                active ? '!bg-neutral-900 !text-white' : 'hover:bg-neutral-50'
-                              }`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <input
-                                  type="checkbox"
-                                  name="group"
-                                  value={group.group_id}
-                                  checked={active}
-                                  onChange={() => toggleGroupSelection(String(group.group_id))}
-                                  className="h-4 w-4"
-                                />
-                                <div>
-                                  <div className={`text-sm font-semibold ${active ? '!text-white' : 'text-neutral-900'}`}>
-                                    {group.group_name}
-                                  </div>
-                                  <div className={`text-[10px] font-mono ${active ? '!text-neutral-200' : 'text-neutral-500'}`}>
-                                    ID: {group.group_id}
-                                  </div>
-                                </div>
-                              </div>
-                              <span className="badge">{group.status}</span>
-                            </label>
-                          );
-                        })}
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6 bg-neutral-50/30">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Left Column: Form (7/12) */}
+                <div className="lg:col-span-7 space-y-6">
+                  <form onSubmit={handleAddGroupAssignment} className="space-y-6">
+                    {assignError && (
+                      <div className="text-xs text-red-600 bg-red-50 border border-red-200 px-4 py-3 rounded-lg">
+                        {assignError}
                       </div>
                     )}
-                  </div>
+
+                    <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-sm space-y-5">
+                      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-neutral-100">
+                         <div className="w-1.5 h-1.5 bg-neutral-900 rounded-full"></div>
+                         <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900">New Assignment Details</h4>
+                      </div>
+
+                      {/* Department */}
+                      <div>
+                        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                          1. Select Department
+                        </label>
+                        <select
+                          value={selectedDepartmentId}
+                          onChange={(e) => setSelectedDepartmentId(e.target.value)}
+                          className="tech-input w-full"
+                          required
+                          disabled={userDepartments.length === 0}
+                        >
+                          <option value="">Select department...</option>
+                          {userDepartments.map((dept) => (
+                            <option key={dept.department_id} value={dept.department_id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                        {userDepartments.length === 0 && (
+                          <p className="text-[10px] text-red-600 mt-1">
+                            User must be added to a department before assigning to a group.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Groups */}
+                      <div className="space-y-3">
+                        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                          2. Select Groups ({selectedGroupIds.length} selected)
+                        </label>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
+                          <input
+                            type="text"
+                            value={groupSearch}
+                            onChange={(e) => setGroupSearch(e.target.value)}
+                            placeholder="Search groups by name or ID..."
+                            className="tech-input w-full pl-10"
+                          />
+                        </div>
+                        <div className="border border-neutral-200 rounded-lg bg-white h-52 overflow-y-auto custom-scrollbar">
+                          {filteredGroupOptions.length === 0 ? (
+                            <div className="p-4 text-xs text-neutral-500 text-center">No matching groups found</div>
+                          ) : (
+                            <div className="divide-y divide-neutral-100">
+                              {filteredGroupOptions.map((group) => {
+                                const active = selectedGroupIds.includes(String(group.group_id));
+                                return (
+                                  <label
+                                    key={group.group_id}
+                                    className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
+                                      active ? 'bg-neutral-900 text-white' : 'hover:bg-neutral-50 text-neutral-700'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3">
+                                      <input
+                                        type="checkbox"
+                                        value={group.group_id}
+                                        checked={active}
+                                        onChange={() => toggleGroupSelection(String(group.group_id))}
+                                        className="rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                                      />
+                                      <div>
+                                        <div className="text-sm font-semibold">
+                                          {group.group_name}
+                                        </div>
+                                        <div className={`text-[10px] font-mono ${active ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                                          ID: {group.group_id}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {group.status !== 'active' && (
+                                      <span className="text-[10px] px-2 py-0.5 rounded bg-neutral-200 text-neutral-600">{group.status}</span>
+                                    )}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Availability */}
+                      <div>
+                        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
+                          3. Availability Schedule
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {schedule.map((day) => (
+                            <div key={day.day} className={`p-3 rounded-lg border transition-colors ${day.enabled ? 'border-neutral-300 bg-white' : 'border-neutral-100 bg-neutral-50 opacity-70'}`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={day.enabled}
+                                    onChange={() => toggleDay(day.day)}
+                                    className="rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                                  />
+                                  <span className="text-xs font-bold uppercase tracking-wider">{DAY_LABEL[day.day]}</span>
+                                </label>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="time"
+                                  value={day.start_time}
+                                  onChange={(e) => updateDayTime(day.day, 'start_time', e.target.value)}
+                                  className="block w-full text-xs border-neutral-300 rounded focus:border-neutral-900 focus:ring-neutral-900 bg-transparent disabled:cursor-not-allowed"
+                                  disabled={!day.enabled}
+                                />
+                                <span className="text-neutral-400 text-xs">to</span>
+                                <input
+                                  type="time"
+                                  value={day.end_time}
+                                  onChange={(e) => updateDayTime(day.day, 'end_time', e.target.value)}
+                                  className="block w-full text-xs border-neutral-300 rounded focus:border-neutral-900 focus:ring-neutral-900 bg-transparent disabled:cursor-not-allowed"
+                                  disabled={!day.enabled}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-neutral-400 mt-2 italic">
+                          * Times are in server time. Use 00:00-23:59 for 24 hours.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        className="px-4 py-2 text-sm text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
+                        onClick={closeAssignGroupModal}
+                        disabled={savingAssignment}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                        disabled={
+                          savingAssignment ||
+                          selectedGroupIds.length === 0 ||
+                          !selectedDepartmentId ||
+                          schedule.length === 0 ||
+                          userDepartments.length === 0
+                        }
+                      >
+                        {savingAssignment ? 'Saving Assignment...' : 'Add Assignment'}
+                      </button>
+                    </div>
+                  </form>
                 </div>
 
-                <div className="flex justify-end gap-3 pt-4 tech-border-t">
-                  <button
-                  type="button"
-                  className="tech-button"
-                  onClick={closeAssignGroupModal}
-                  disabled={savingAssignment}
-                >
-                  Cancel
-                </button>
-                  <button
-                    type="submit"
-                    className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={
-                      savingAssignment ||
-                      selectedGroupIds.length === 0 ||
-                      !selectedDepartmentId ||
-                      selectedShifts.length === 0 ||
-                      userDepartments.length === 0
-                    }
-                  >
-                    {savingAssignment ? 'Saving...' : 'Add Assignment'}
-                  </button>
-                </div>
-              </form>
-
-              {/* Existing assignments */}
-              <div className="space-y-3">
-                <div className="section-tag">Active Assignments</div>
-                {assignLoading ? (
-                  <div className="flex items-center gap-2 text-xs text-neutral-500">
-                    <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
-                    Loading assignments...
+                {/* Right Column: Existing Assignments (5/12) */}
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                     <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-500">Active Assignments</h4>
+                     <span className="text-[10px] px-2 py-0.5 bg-neutral-100 rounded-full text-neutral-600 font-mono">{assignmentList.length}</span>
                   </div>
-                ) : assignmentList.length === 0 ? (
-                  <div className="tech-border bg-neutral-50 p-6 text-xs text-neutral-500">
-                    No assignments yet.
-                  </div>
-                ) : (
-                  <div className="tech-border bg-white overflow-hidden">
-                    <div className="max-h-80 overflow-y-auto">
-                      <table className="min-w-full">
-                        <thead className="bg-neutral-100 tech-border-b">
-                          <tr>
-                            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-neutral-500">Group</th>
-                            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-neutral-500">Department</th>
-                            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-neutral-500">Shift</th>
-                            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-neutral-500">Added</th>
-                            <th className="px-3 py-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-200">
-                          {assignmentList.map((assignment) => (
-                            <tr key={`${assignment.group_id}-${assignment.department_id}-${assignment.shift}`}>
-                              <td className="px-3 py-2 text-xs text-neutral-900">
-                                <div className="font-semibold">{assignment.group_name}</div>
-                                <div className="text-[10px] text-neutral-500 font-mono">ID: {assignment.group_id}</div>
-                              </td>
-                              <td className="px-3 py-2 text-xs text-neutral-900">
-                                {assignment.department_name}
-                              </td>
-                              <td className="px-3 py-2 text-xs">
-                                <span className="badge">{assignment.shift}</span>
-                              </td>
-                              <td className="px-3 py-2 text-[10px] text-neutral-500 font-mono">
-                                {new Date(assignment.added_at).toLocaleString()}
-                              </td>
-                              <td className="px-3 py-2 text-right">
+                  
+                  {assignLoading ? (
+                    <div className="flex items-center justify-center py-12 tech-border bg-white rounded-xl">
+                      <div className="flex items-center gap-2 text-xs text-neutral-500">
+                        <div className="w-2 h-2 bg-neutral-900 animate-pulse-subtle"></div>
+                        Loading...
+                      </div>
+                    </div>
+                  ) : assignmentList.length === 0 ? (
+                    <div className="text-center py-12 border-2 border-dashed border-neutral-200 rounded-xl bg-neutral-50/50">
+                      <p className="text-xs text-neutral-400">No active assignments found.</p>
+                      <p className="text-[10px] text-neutral-400 mt-1">Add one using the form.</p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden flex flex-col max-h-[calc(100%-40px)]">
+                       <div className="overflow-y-auto">
+                        <div className="divide-y divide-neutral-100">
+                          {assignmentList.map((assignment, idx) => (
+                            <div key={`${assignment.group_id}-${assignment.department_id}-${idx}`} className="p-4 hover:bg-neutral-50 transition-colors group">
+                              <div className="flex items-start justify-between mb-2">
+                                <div>
+                                  <div className="font-bold text-sm text-neutral-900">{assignment.group_name}</div>
+                                  <div className="text-[10px] text-neutral-500 font-mono">ID: {assignment.group_id} • {assignment.department_name}</div>
+                                </div>
                                 <button
                                   onClick={() => handleRemoveAssignment(assignment)}
-                                  className="p-1 text-neutral-400 hover:text-neutral-900 transition-colors"
+                                  className="text-neutral-400 hover:text-red-600 transition-colors p-1 opacity-0 group-hover:opacity-100"
+                                  title="Remove Assignment"
                                 >
                                   <X className="h-4 w-4" />
                                 </button>
-                              </td>
-                            </tr>
+                              </div>
+                              
+                              <div className="bg-neutral-50 rounded p-2 text-xs border border-neutral-100">
+                                <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1 font-semibold">Schedule</div>
+                                <div className="text-neutral-700 font-medium leading-relaxed">
+                                  {summarizeSchedule(Array.isArray(assignment.schedule) ? assignment.schedule as DaySchedule[] : [])}
+                                </div>
+                              </div>
+                            </div>
                           ))}
-                        </tbody>
-                      </table>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>

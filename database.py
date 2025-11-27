@@ -3,16 +3,23 @@ Database module for managing SQLite database operations.
 Implements the three-table schema: Groups, Users, Incidents.
 """
 
+import os
 import sqlite3
 import json
 import logging
 import re
-from datetime import timedelta
-from typing import Optional, List, Dict, Any, Tuple
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple, Set
 from contextlib import contextmanager
 from threading import Lock
 
-from time_utils import parse_timestamp, utc_iso_now, utc_now
+from time_utils import (
+    is_now_in_schedule,
+    normalize_week_schedule,
+    parse_timestamp,
+    utc_iso_now,
+    utc_now,
+)
 from sentry_config import SentryConfig, sentry_trace
 
 logger = logging.getLogger(__name__)
@@ -132,9 +139,9 @@ class Database:
                 group_id INTEGER NOT NULL,
                 department_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                shift TEXT NOT NULL CHECK(shift IN ('DAY', 'NIGHT')),
+                schedule TEXT NOT NULL,
                 added_at TEXT NOT NULL,
-                PRIMARY KEY (group_id, department_id, user_id, shift),
+                PRIMARY KEY (group_id, department_id, user_id),
                 FOREIGN KEY (group_id) REFERENCES groups(group_id),
                 FOREIGN KEY (department_id) REFERENCES departments(department_id),
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -321,7 +328,7 @@ class Database:
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_group_members_lookup
-            ON group_members(group_id, department_id, shift)
+            ON group_members(group_id, department_id)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_group_members_user
@@ -362,6 +369,121 @@ class Database:
             if column_name not in columns:
                 cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
                 logger.info(f"Added column {column_name} to {table_name}")
+
+        def migrate_group_members_to_schedule():
+            """
+            Upgrade legacy group_members schemas to the schedule-based schema.
+
+            Migration order (if needed):
+              shift -> start_minute/end_minute -> schedule JSON with 7-day entries.
+            """
+            columns = get_columns('group_members')
+            if not columns:
+                return
+
+            has_schedule = 'schedule' in columns
+            has_start_minute = 'start_minute' in columns and 'end_minute' in columns
+            has_shift = 'shift' in columns
+            if has_schedule and not has_shift and not has_start_minute:
+                # Already on the target schema.
+                return
+
+            # Drop legacy indexes before renaming the table to avoid name collisions.
+            cursor.execute("DROP INDEX IF EXISTS idx_group_members_lookup")
+            cursor.execute("DROP INDEX IF EXISTS idx_group_members_user")
+
+            cursor.execute("ALTER TABLE group_members RENAME TO group_members_legacy")
+
+            cursor.execute("""
+                CREATE TABLE group_members (
+                    group_id INTEGER NOT NULL,
+                    department_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    schedule TEXT NOT NULL,
+                    added_at TEXT NOT NULL,
+                    PRIMARY KEY (group_id, department_id, user_id),
+                    FOREIGN KEY (group_id) REFERENCES groups(group_id),
+                    FOREIGN KEY (department_id) REFERENCES departments(department_id),
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            """)
+
+            def default_schedule_from_window(start_minute: int, end_minute: int) -> str:
+                schedule = normalize_week_schedule([
+                    {"day": idx, "enabled": True, "start_minute": start_minute, "end_minute": end_minute}
+                    for idx in range(7)
+                ])
+                return json.dumps(schedule)
+
+            def map_legacy_shift_to_window(shift_value: str) -> tuple[int, int]:
+                try:
+                    day_start_hour = int(os.getenv('SHIFT_DAY_START_HOUR', '7'))
+                    night_start_hour = int(os.getenv('SHIFT_NIGHT_START_HOUR', '19'))
+                    if day_start_hour == night_start_hour:
+                        raise ValueError("Legacy SHIFT_* hours cannot be identical")
+                    if not (0 <= day_start_hour <= 23 and 0 <= night_start_hour <= 23):
+                        raise ValueError("Legacy SHIFT_* hours must be between 0 and 23")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Invalid legacy SHIFT_DAY_START_HOUR/SHIFT_NIGHT_START_HOUR values; "
+                        "falling back to 07:00-19:00 mapping: %s", exc
+                    )
+                    day_start_hour, night_start_hour = 7, 19
+
+                day_start_minute = day_start_hour * 60
+                night_start_minute = night_start_hour * 60
+
+                normalized = (shift_value or "").strip().upper()
+                if normalized == "DAY":
+                    start = day_start_minute
+                    end = (night_start_minute - 1) % (24 * 60)
+                elif normalized == "NIGHT":
+                    start = night_start_minute
+                    end = (day_start_minute - 1) % (24 * 60)
+                else:
+                    raise ValueError(f"Unknown legacy shift value '{shift_value}'")
+
+                if start == end:
+                    raise ValueError("Legacy shift mapping resulted in zero-length window")
+                return start, end
+
+            cursor.execute("""
+                SELECT group_id, department_id, user_id, *
+                FROM group_members_legacy
+            """)
+            migrated = 0
+            skipped = 0
+            for row in cursor.fetchall():
+                try:
+                    # SQLite rows are sequences; rely on column presence for mapping.
+                    legacy_columns = get_columns('group_members_legacy')
+                    added_at = row['added_at'] if 'added_at' in legacy_columns else utc_iso_now()
+
+                    if 'schedule' in legacy_columns:
+                        schedule_json = row['schedule']
+                    elif 'start_minute' in legacy_columns and 'end_minute' in legacy_columns:
+                        schedule_json = default_schedule_from_window(int(row['start_minute']), int(row['end_minute']))
+                    elif 'shift' in legacy_columns:
+                        start_minute, end_minute = map_legacy_shift_to_window(row['shift'])
+                        schedule_json = default_schedule_from_window(start_minute, end_minute)
+                    else:
+                        raise ValueError("No recognizable availability fields on legacy group_members row")
+
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO group_members (
+                            group_id, department_id, user_id, schedule, added_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                    """, (row['group_id'], row['department_id'], row['user_id'], schedule_json, added_at))
+                    migrated += 1
+                except Exception as exc:  # noqa: BLE001
+                    skipped += 1
+                    logger.warning(
+                        "Skipping legacy group_member row (%s, %s, %s) due to error: %s",
+                        row['group_id'], row['department_id'], row['user_id'], exc
+                    )
+
+            cursor.execute("DROP TABLE IF EXISTS group_members_legacy")
+            logger.info("Migrated %s legacy group_member rows (%s skipped)", migrated, skipped)
 
         # Ensure companies table exists (older versions may not have it)
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='companies'")
@@ -404,17 +526,18 @@ class Database:
                 group_id INTEGER NOT NULL,
                 department_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                shift TEXT NOT NULL CHECK(shift IN ('DAY', 'NIGHT')),
+                schedule TEXT NOT NULL,
                 added_at TEXT NOT NULL,
-                PRIMARY KEY (group_id, department_id, user_id, shift),
+                PRIMARY KEY (group_id, department_id, user_id),
                 FOREIGN KEY (group_id) REFERENCES groups(group_id),
                 FOREIGN KEY (department_id) REFERENCES departments(department_id),
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        migrate_group_members_to_schedule()
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_group_members_lookup
-            ON group_members(group_id, department_id, shift)
+            ON group_members(group_id, department_id)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_group_members_user
@@ -1696,22 +1819,22 @@ class Database:
             handles.append(handle or f"User_{user_id}")
         return handles
 
-    @staticmethod
-    def _normalize_shift_value(shift: Optional[str]) -> Optional[str]:
-        """Normalize shift strings to DAY/NIGHT and validate input."""
-        if shift is None:
-            return None
-        normalized = (shift or "").strip().upper()
-        if normalized not in ('DAY', 'NIGHT'):
-            raise ValueError("Shift must be 'DAY' or 'NIGHT'")
-        return normalized
+    def _normalize_schedule(self, schedule: Any) -> str:
+        """
+        Normalize a weekly schedule input and return JSON string for storage.
+
+        Expected input: list of dicts with {day, enabled, start_time/end_time or start_minute/end_minute}.
+        Missing days are filled as disabled.
+        """
+        normalized = normalize_week_schedule(schedule)
+        return json.dumps(normalized)
 
     def add_member_to_group(self, group_id: int, department_id: int,
-                            user_id: int, shift: str):
-        """Assign a department member to a specific group and shift."""
-        normalized_shift = self._normalize_shift_value(shift)
-        if normalized_shift is None:
-            raise ValueError("Shift is required when adding a group member")
+                            user_id: int, schedule: Any):
+        """
+        Assign a department member to a group with a weekly availability schedule.
+        """
+        schedule_json = self._normalize_schedule(schedule)
 
         # Ensure the user actually belongs to the department to avoid stale mappings
         if not self.is_user_in_department(department_id, user_id):
@@ -1722,68 +1845,132 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR IGNORE INTO group_members (
-                        group_id, department_id, user_id, shift, added_at
+                        group_id, department_id, user_id, schedule, added_at
                     ) VALUES (?, ?, ?, ?, ?)
-                """, (group_id, department_id, user_id, normalized_shift, utc_iso_now()))
-                logger.info(f"Added user {user_id} to group {group_id} for department {department_id} ({normalized_shift})")
+                """, (group_id, department_id, user_id, schedule_json, utc_iso_now()))
+                logger.info(
+                    "Added user %s to group %s for department %s (weekly schedule)",
+                    user_id, group_id, department_id
+                )
 
     def remove_member_from_group(self, group_id: int, department_id: int,
-                                 user_id: int, shift: Optional[str] = None):
-        """Remove a group assignment for a user, optionally scoped to a shift."""
-        normalized_shift = self._normalize_shift_value(shift)
+                                 user_id: int):
+        """Remove a group assignment for a user."""
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                if normalized_shift:
-                    cursor.execute("""
-                        DELETE FROM group_members
-                        WHERE group_id = ? AND department_id = ? AND user_id = ? AND shift = ?
-                    """, (group_id, department_id, user_id, normalized_shift))
-                else:
-                    cursor.execute("""
-                        DELETE FROM group_members
-                        WHERE group_id = ? AND department_id = ? AND user_id = ?
-                    """, (group_id, department_id, user_id))
-                logger.info(f"Removed user {user_id} from group {group_id} for department {department_id} (shift={normalized_shift or 'any'})")
+                cursor.execute("""
+                    DELETE FROM group_members
+                    WHERE group_id = ? AND department_id = ? AND user_id = ?
+                """, (group_id, department_id, user_id))
+                logger.info(
+                    "Removed user %s from group %s for department %s",
+                    user_id, group_id, department_id
+                )
 
-    def get_group_department_member_ids(self, group_id: int, department_id: int,
-                                        shift: Optional[str] = None) -> List[int]:
-        """Return member IDs for a department scoped to a group and optional shift."""
-        normalized_shift = self._normalize_shift_value(shift)
+    def get_group_department_members(self, group_id: int, department_id: int) -> List[Dict[str, Any]]:
+        """
+        Return group-level assignments for a department, including availability windows.
+
+        Does not fall back to department-wide membership to avoid paging outside
+        the configured group.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            if normalized_shift:
-                cursor.execute("""
-                    SELECT user_id FROM group_members
-                    WHERE group_id = ? AND department_id = ? AND shift = ?
-                """, (group_id, department_id, normalized_shift))
-            else:
-                cursor.execute("""
-                    SELECT user_id FROM group_members
-                    WHERE group_id = ? AND department_id = ?
-                """, (group_id, department_id))
-            return [int(row['user_id']) for row in cursor.fetchall()]
+            cursor.execute("""
+                SELECT
+                    gm.user_id,
+                    gm.schedule,
+                    gm.added_at,
+                    u.telegram_handle,
+                    u.username
+                FROM group_members gm
+                LEFT JOIN users u ON u.user_id = gm.user_id
+                WHERE gm.group_id = ? AND gm.department_id = ?
+            """, (group_id, department_id))
+            rows = cursor.fetchall()
+
+        members: List[Dict[str, Any]] = []
+        for row in rows:
+            raw_schedule = json.loads(row['schedule']) if row['schedule'] else []
+            members.append({
+                'user_id': int(row['user_id']),
+                'schedule': raw_schedule,
+                'added_at': row['added_at'],
+                'telegram_handle': row['telegram_handle'],
+                'username': row['username']
+            })
+        return members
 
     def get_group_department_handles(self, group_id: int, department_id: int,
-                                     shift: Optional[str] = None) -> List[str]:
+                                     active_only: bool = False,
+                                     reference_time: Optional[datetime] = None) -> List[str]:
         """
-        Return handles for department members assigned to a specific group/shift.
+        Return handles for department members assigned to a specific group.
 
-        If a shift is provided, only members with that shift are returned. If no
-        group-level assignments exist, an empty list is returned (no fallback to
-        the entire department to avoid cross-group paging).
+        If active_only is True, only members whose schedule includes the
+        reference_time (server local time by default) are returned.
         """
-        member_ids = self.get_group_department_member_ids(group_id, department_id, shift)
+        members = self.get_group_department_members(group_id, department_id)
         handles: List[str] = []
-        for user_id in member_ids:
-            user = self.get_user(user_id)
-            handle = None
-            if user:
-                handle = user.get('telegram_handle') or (
-                    f"@{user['username']}" if user.get('username') else None
-                )
-            handles.append(handle or f"User_{user_id}")
+        seen: Set[str] = set()
+
+        for member in members:
+            if active_only:
+                try:
+                    if not is_now_in_schedule(member['schedule'], reference_time):
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Skipping schedule check for user %s: %s", member['user_id'], exc)
+                    continue
+
+            handle = member.get('telegram_handle') or (
+                f"@{member['username']}" if member.get('username') else None
+            )
+            resolved = handle or f"User_{member['user_id']}"
+            if resolved not in seen:
+                seen.add(resolved)
+                handles.append(resolved)
+
         return handles
+
+    def get_active_group_department_handles(self, group_id: int, department_id: int,
+                                            reference_time: Optional[datetime] = None
+                                            ) -> tuple[List[str], Optional[str]]:
+        """
+        Return handles and a concise note for members active at the given time.
+
+        Note summarizes the server-time check.
+        """
+        now = reference_time if reference_time is not None else datetime.now().astimezone()
+        members = self.get_group_department_members(group_id, department_id)
+
+        handles: List[str] = []
+        seen_handles: Set[str] = set()
+
+        for member in members:
+            try:
+                if not is_now_in_schedule(member['schedule'], now):
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping schedule check for user %s: %s", member['user_id'], exc)
+                continue
+
+            handle = member.get('telegram_handle') or (
+                f"@{member['username']}" if member.get('username') else None
+            )
+            resolved = handle or f"User_{member['user_id']}"
+            if resolved not in seen_handles:
+                seen_handles.add(resolved)
+                handles.append(resolved)
+
+        note = None
+        if handles:
+            time_text = now.astimezone().strftime("%H:%M")
+            weekday = now.astimezone().strftime("%A")
+            note = f"Active assignments checked at {time_text} {weekday} (server time)."
+
+        return handles, note
 
     def is_user_company_department_member(self, company_id: Optional[int], user_id: int) -> bool:
         """Check if the user belongs to any department within a company."""
@@ -2554,6 +2741,18 @@ class Database:
                   AND datetime(t_department_assigned) <= datetime(?)
             """, (threshold_time,))
 
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_current_unclaimed_incidents(self) -> List[Dict[str, Any]]:
+        """Get all incidents currently awaiting claim (department must be assigned)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT *
+                FROM incidents
+                WHERE status = 'Awaiting_Claim'
+                  AND t_department_assigned IS NOT NULL
+            """)
             return [dict(row) for row in cursor.fetchall()]
 
     def get_awaiting_summary_incidents(self, minutes_threshold: int) -> List[Dict[str, Any]]:

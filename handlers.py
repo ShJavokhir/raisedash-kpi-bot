@@ -17,7 +17,6 @@ from config import Config
 from reporting import KPIReportGenerator, html_to_bytes
 from sentry_config import SentryConfig
 from logging_config import set_log_context, clear_log_context, LogContext
-from time_utils import get_current_shift
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +80,24 @@ class BotHandlers:
         ):
             logger.info(f"Callback: {callback_data}")
 
-    def _get_active_shift(self) -> str:
-        """Determine the current shift label based on server time and config."""
+    def _get_active_group_handles(self, group_id: Optional[int], department_id: int) -> Tuple[List[str], Optional[str]]:
+        """
+        Fetch handles for members active right now for the provided group/department.
+
+        Returns (handles, availability_note).
+        """
+        if group_id is None:
+            return [], None
+
         try:
-            return get_current_shift(
-                day_start_hour=Config.SHIFT_DAY_START_HOUR,
-                night_start_hour=Config.SHIFT_NIGHT_START_HOUR
+            return self.db.get_active_group_department_handles(group_id, department_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to resolve active group handles for group %s dept %s: %s",
+                group_id, department_id, exc,
+                exc_info=True
             )
-        except ValueError as exc:
-            logger.error(f"Invalid shift configuration, defaulting to DAY: {exc}")
-            return "DAY"
+            return [], None
 
     def _get_user_handle(self, user) -> str:
         """Get user's handle with @ prefix."""
@@ -1233,13 +1240,12 @@ class BotHandlers:
             )
             await query.answer("Department selected")
 
-            shift = self._get_active_shift()
-            handles = self.db.get_group_department_handles(
-                incident.get('group_id'), department_id, shift
+            handles, availability_note = self._get_active_group_handles(
+                incident.get('group_id'), department_id
             )
             if handles:
                 logger.info(f"Pinging {len(handles)} department members")
-                pings = self.message_builder.build_department_ping(handles, incident_id, shift)
+                pings = self.message_builder.build_department_ping(handles, incident_id, availability_note)
                 for ping in pings:
                     await context.bot.send_message(
                         chat_id=chat.id,
@@ -1248,8 +1254,8 @@ class BotHandlers:
                     )
             else:
                 logger.warning(
-                    f"No department members to ping for group {incident.get('group_id')} "
-                    f"dept {department_id} shift {shift}"
+                    f"No active department members to ping for group {incident.get('group_id')} "
+                    f"dept {department_id}"
                 )
 
     async def _handle_change_department(self, query, user, chat, incident_id: str, membership: Dict[str, Any]):
@@ -1363,12 +1369,11 @@ class BotHandlers:
         )
         await query.answer("Department updated")
 
-        shift = self._get_active_shift()
-        handles = self.db.get_group_department_handles(
-            incident.get('group_id'), department_id, shift
+        handles, availability_note = self._get_active_group_handles(
+            incident.get('group_id'), department_id
         )
         if handles:
-            pings = self.message_builder.build_department_ping(handles, incident_id, shift)
+            pings = self.message_builder.build_department_ping(handles, incident_id, availability_note)
             for ping in pings:
                 await context.bot.send_message(
                     chat_id=chat.id,
@@ -1377,8 +1382,8 @@ class BotHandlers:
                 )
         else:
             logger.warning(
-                f"No department members to ping for group {incident.get('group_id')} "
-                f"dept {department_id} shift {shift}"
+                f"No active department members to ping for group {incident.get('group_id')} "
+                f"dept {department_id}"
             )
 
     async def _handle_claim(self, query, user, chat, incident_id: str):

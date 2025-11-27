@@ -3,6 +3,7 @@ Reminder module for automated SLA nudges and notifications.
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import Dict
 from telegram import Bot
 from telegram.error import TelegramError
@@ -29,14 +30,23 @@ class ReminderService:
         # to avoid spamming the same reminder multiple times
         # Maps incident_id -> t_department_assigned snapshot
         self._unclaimed_reminded: Dict[str, str] = {}
+        # Track shift-start pings to avoid duplicates within the same start event
+        self._shift_start_pings: set[str] = set()
+        self._last_shift_check = None
 
     async def check_and_send_reminders(self):
         """Check for incidents that need reminders and send them."""
         logger.debug("Starting reminder check cycle")
         try:
+            shift_ping_count = await self._check_shift_start_pings()
             unclaimed_count = await self._check_unclaimed_reminders()
             timeout_count = await self._check_summary_timeouts()
-            logger.debug(f"Reminder check complete: {unclaimed_count} unclaimed reminders, {timeout_count} summary timeouts")
+            logger.debug(
+                "Reminder check complete: %s shift pings, %s unclaimed reminders, %s summary timeouts",
+                shift_ping_count,
+                unclaimed_count,
+                timeout_count
+            )
         except Exception as e:
             logger.error(f"Error in reminder check: {e}", exc_info=True)
             SentryConfig.capture_exception(e, task="reminder_service")
@@ -107,6 +117,127 @@ class ReminderService:
                 SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="unclaimed")
 
         return reminder_count
+
+    async def _check_shift_start_pings(self):
+        """
+        Ping newly active schedules for unclaimed incidents.
+
+        Runs on the reminder cadence; detects schedule start times that occurred
+        since the last check (defaulting to the last interval) and tags the
+        relevant members once per start event.
+        """
+        now_local = datetime.now().astimezone()
+        window_start = self._last_shift_check or (now_local - timedelta(minutes=Config.REMINDER_CHECK_INTERVAL_MINUTES))
+        window_end = now_local
+        self._last_shift_check = now_local
+
+        incidents = self.db.get_current_unclaimed_incidents()
+        if not incidents:
+            return 0
+
+        ping_count = 0
+        for incident in incidents:
+            incident_id = incident['incident_id']
+            department_id = incident.get('department_id')
+            group_id = incident.get('group_id')
+            if not department_id or not group_id:
+                continue
+
+            membership = self.db.get_company_membership(group_id)
+            if not membership or not membership.get('group') or not membership.get('is_active'):
+                continue
+
+            members = self.db.get_group_department_members(group_id, department_id)
+            if not members:
+                continue
+
+            handles_to_ping = set()
+            for member in members:
+                schedule = member.get('schedule') or []
+                events = self._iter_schedule_start_events(schedule, window_start, window_end)
+                for event_dt in events:
+                    key = f"{incident_id}:{member['user_id']}:{event_dt.isoformat()}"
+                    if key in self._shift_start_pings:
+                        continue
+                    self._shift_start_pings.add(key)
+
+                    handle = member.get('telegram_handle') or (
+                        f"@{member['username']}" if member.get('username') else None
+                    ) or f"User_{member['user_id']}"
+                    handles_to_ping.add(handle)
+
+            if not handles_to_ping:
+                continue
+
+            note = f"Shift start ping at {now_local.strftime('%H:%M')} {now_local.strftime('%A')} (server time)."
+            ping_messages = self.message_builder.build_department_ping(
+                list(handles_to_ping),
+                incident_id,
+                note
+            )
+            for ping in ping_messages:
+                try:
+                    await self.bot.send_message(
+                        chat_id=group_id,
+                        text=ping,
+                        reply_to_message_id=incident.get('pinned_message_id')
+                    )
+                    ping_count += 1
+                except TelegramError as e:
+                    logger.error(f"Error sending shift start ping for {incident_id}: {e}")
+                    SentryConfig.capture_exception(e, incident_id=incident_id, reminder_type="shift_start")
+
+        if len(self._shift_start_pings) > 5000:
+            self._shift_start_pings = set(list(self._shift_start_pings)[-2500:])
+
+        return ping_count
+
+    @staticmethod
+    def _iter_schedule_start_events(schedule, window_start: datetime, window_end: datetime):
+        """
+        Yield datetimes for schedule start times that fall within [window_start, window_end].
+        """
+        if window_end <= window_start:
+            return []
+
+        results = []
+        tz = window_start.tzinfo
+        # Cover all days spanned by the window
+        day_count = (window_end.date() - window_start.date()).days
+        candidate_dates = [window_start.date() + timedelta(days=i) for i in range(day_count + 1)]
+
+        for entry in schedule:
+            if not entry.get('enabled'):
+                continue
+            entry_day = entry.get('day')
+            try:
+                entry_day_int = int(entry_day)
+            except Exception:
+                continue
+
+            start_minute = entry.get('start_minute')
+            if start_minute is None:
+                continue
+            try:
+                start_minute_int = int(start_minute)
+            except Exception:
+                continue
+
+            for candidate_date in candidate_dates:
+                if candidate_date.weekday() != entry_day_int:
+                    continue
+                event_dt = datetime(
+                    candidate_date.year,
+                    candidate_date.month,
+                    candidate_date.day,
+                    start_minute_int // 60,
+                    start_minute_int % 60,
+                    tzinfo=tz
+                )
+                if window_start <= event_dt <= window_end:
+                    results.append(event_dt)
+
+        return results
 
     async def _check_summary_timeouts(self):
         """Auto-close incidents that have waited too long for a summary."""

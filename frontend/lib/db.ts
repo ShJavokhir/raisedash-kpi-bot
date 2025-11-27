@@ -187,7 +187,8 @@ export interface GroupMember {
   group_id: number;
   department_id: number;
   user_id: number;
-  shift: 'DAY' | 'NIGHT';
+  start_minute: number;
+  end_minute: number;
   added_at: string;
 }
 
