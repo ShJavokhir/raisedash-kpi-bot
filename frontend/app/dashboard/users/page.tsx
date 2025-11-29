@@ -13,6 +13,7 @@ interface UserData {
   team_role: string;
   department_ids: number[];
   group_connections: number[];
+  tags: string;
   created_at: string;
 }
 
@@ -92,6 +93,10 @@ export default function UsersPage() {
   const [schedule, setSchedule] = useState<DaySchedule[]>([]);
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState('');
+  const [savingTags, setSavingTags] = useState(false);
+  const [tagFeedback, setTagFeedback] = useState<string | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -100,6 +105,18 @@ export default function UsersPage() {
   useEffect(() => {
     applyFilters();
   }, [users, searchQuery, roleFilter, departmentFilter]);
+
+  useEffect(() => {
+    if (assignUser) {
+      setTagInput(assignUser.tags || '');
+      setTagFeedback(null);
+      setTagError(null);
+    } else {
+      setTagInput('');
+      setTagFeedback(null);
+      setTagError(null);
+    }
+  }, [assignUser]);
 
   const fetchData = async () => {
     try {
@@ -112,7 +129,11 @@ export default function UsersPage() {
 
       if (usersResponse.ok) {
         const usersData = await usersResponse.json();
-        setUsers(usersData.users);
+        const normalizedUsers = (usersData.users || []).map((user: any) => ({
+          ...user,
+          tags: user.tags || '',
+        }));
+        setUsers(normalizedUsers);
       }
 
       if (departmentsResponse.ok) {
@@ -141,7 +162,8 @@ export default function UsersPage() {
         const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
         const username = (user.username || '').toLowerCase();
         const handle = (user.telegram_handle || '').toLowerCase();
-        return fullName.includes(query) || username.includes(query) || handle.includes(query);
+        const tags = (user.tags || '').toLowerCase();
+        return fullName.includes(query) || username.includes(query) || handle.includes(query) || tags.includes(query);
       });
     }
 
@@ -306,6 +328,9 @@ export default function UsersPage() {
     setSelectedGroupIds([]);
     setSelectedDepartmentId('');
     setSchedule(buildDefaultSchedule());
+    setTagInput('');
+    setTagFeedback(null);
+    setTagError(null);
   };
 
   const toggleGroupSelection = (groupId: string) => {
@@ -403,6 +428,45 @@ export default function UsersPage() {
     } catch (error) {
       console.error('Error removing group assignment:', error);
       setAssignError('Failed to remove assignment');
+    }
+  };
+
+  const handleSaveTags = async () => {
+    if (!assignUser) return;
+    setSavingTags(true);
+    setTagFeedback(null);
+    setTagError(null);
+
+    try {
+      const response = await fetch(`/api/users/${assignUser.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: tagInput }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setTagError(data.error || 'Failed to update tags');
+        return;
+      }
+
+      const data = await response.json();
+      const normalizedTags = typeof data.tags === 'string' ? data.tags : tagInput.trim();
+      setTagInput(normalizedTags);
+      setTagFeedback('Tags saved');
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.user_id === assignUser.user_id ? { ...u, tags: normalizedTags } : u
+        )
+      );
+      setAssignUser((prev) =>
+        prev ? { ...prev, tags: normalizedTags } : prev
+      );
+    } catch (error) {
+      console.error('Error saving tags:', error);
+      setTagError('Failed to update tags');
+    } finally {
+      setSavingTags(false);
     }
   };
 
@@ -739,6 +803,9 @@ export default function UsersPage() {
               <div>
                 <h3 className="text-lg font-bold tracking-tight text-neutral-900">{getUserDisplayName(assignUser)}</h3>
                 <p className="text-xs text-neutral-500 font-medium">Manage Group Assignments</p>
+                <p className="text-[10px] text-neutral-500 mt-1">
+                  Tags: <span className="font-mono text-neutral-900">{(assignUser.tags || '').trim() || 'Not set'}</span>
+                </p>
               </div>
               <button
                 onClick={closeAssignGroupModal}
@@ -760,6 +827,56 @@ export default function UsersPage() {
                         {assignError}
                       </div>
                     )}
+
+                    <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 bg-neutral-900 rounded-full"></div>
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900">Reporting Tags</h4>
+                        </div>
+                        {tagFeedback && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
+                            Saved
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-neutral-500 leading-relaxed">
+                        Keep a simple, comma-separated string for reporting (e.g. region, shift, lane).
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                          type="text"
+                          value={tagInput}
+                          onChange={(e) => {
+                            setTagInput(e.target.value);
+                            setTagFeedback(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (!savingTags) {
+                                handleSaveTags();
+                              }
+                            }
+                          }}
+                          placeholder="e.g., Night Shift, West Region"
+                          className="tech-input w-full"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveTags}
+                          className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={savingTags || !assignUser}
+                        >
+                          {savingTags ? 'Saving...' : 'Save Tags'}
+                        </button>
+                      </div>
+                      {(tagError || tagFeedback) && (
+                        <div className={`text-[10px] ${tagError ? 'text-red-600' : 'text-green-700'}`}>
+                          {tagError || tagFeedback}
+                        </div>
+                      )}
+                    </div>
 
                     <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-sm space-y-5">
                       <div className="flex items-center gap-2 mb-2 pb-2 border-b border-neutral-100">

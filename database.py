@@ -104,6 +104,7 @@ class Database:
                 user_id INTEGER PRIMARY KEY,
                 telegram_handle TEXT,
                 team_role TEXT CHECK(team_role IN ('Driver', 'Dispatcher', 'OpsManager')),
+                tags TEXT NOT NULL DEFAULT '',
                 metadata TEXT NOT NULL DEFAULT '{}'
             )
         """)
@@ -567,6 +568,7 @@ class Database:
         ensure_column('users', 'is_bot', "INTEGER NOT NULL DEFAULT 0")
         ensure_column('users', 'group_connections', "TEXT NOT NULL DEFAULT '[]'")  # JSON array
         ensure_column('users', 'metadata', "TEXT NOT NULL DEFAULT '{}'")  # JSON blob for audit changes
+        ensure_column('users', 'tags', "TEXT NOT NULL DEFAULT ''")
         ensure_column('users', 'created_at', "TEXT")
         ensure_column('users', 'updated_at', "TEXT")
 
@@ -1438,7 +1440,8 @@ class Database:
     def track_user(self, user_id: int, username: Optional[str] = None,
                    first_name: Optional[str] = None, last_name: Optional[str] = None,
                    language_code: Optional[str] = None, is_bot: bool = False,
-                   group_id: Optional[int] = None, team_role: Optional[str] = None):
+                   group_id: Optional[int] = None, team_role: Optional[str] = None,
+                   tags: Optional[str] = None):
         """
         Comprehensive user tracking function with change detection.
         Captures all available Telegram user data and only writes when something changed.
@@ -1452,6 +1455,7 @@ class Database:
             is_bot: Whether the user is a bot (default: False)
             group_id: Group ID where user was seen (optional, adds to group_connections)
             team_role: User's team role if applicable (optional, preserves higher roles)
+            tags: Optional reporting tags string (preserved if not provided)
 
         Returns:
             Dict containing the user's complete information after upsert
@@ -1488,19 +1492,23 @@ class Database:
                     final_team_role = team_role
 
                 created_at = existing_row['created_at'] if existing_row and existing_row['created_at'] else timestamp
+                normalized_tags = None
+                if tags is not None:
+                    normalized_tags = re.sub(r"\s+", " ", tags).strip()
 
                 if not existing_row:
+                    tag_value = normalized_tags if normalized_tags is not None else ""
                     cursor.execute("""
                         INSERT INTO users (
                             user_id, telegram_handle, username, first_name, last_name,
-                            language_code, is_bot, team_role, group_connections,
+                            language_code, is_bot, team_role, group_connections, tags,
                             metadata, created_at, updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         user_id, telegram_handle, username, first_name, last_name,
                         language_code, 1 if is_bot else 0, final_team_role,
-                        group_connections_json, json.dumps({"accountChanges": []}), created_at, timestamp
+                        group_connections_json, tag_value, json.dumps({"accountChanges": []}), created_at, timestamp
                     ))
                     logger.info(
                         f"Tracked user {user_id} ({telegram_handle}) "
@@ -1529,6 +1537,7 @@ class Database:
                     record_change('is_bot', 1 if is_bot else 0)
                     record_change('team_role', final_team_role or existing_row['team_role'])
                     record_change('group_connections', group_connections_json)
+                    record_change('tags', normalized_tags if normalized_tags is not None else existing_row['tags'])
                     if not existing_row['created_at']:
                         changes['created_at'] = created_at
 
@@ -1611,6 +1620,7 @@ class Database:
                     'is_bot': bool(row['is_bot']),
                     'team_role': row['team_role'],
                     'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'tags': row['tags'],
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
@@ -1648,6 +1658,7 @@ class Database:
                     'is_bot': bool(row['is_bot']),
                     'team_role': row['team_role'],
                     'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'tags': row['tags'],
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }

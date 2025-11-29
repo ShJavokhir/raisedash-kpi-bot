@@ -78,6 +78,7 @@ export async function GET(
       is_bot: user.is_bot,
       team_role: user.team_role,
       group_connections: parseJSON(user.group_connections, []),
+      tags: user.tags || '',
       created_at: user.created_at,
       updated_at: user.updated_at,
       departments,
@@ -94,6 +95,65 @@ export async function GET(
     });
   } catch (error) {
     console.error('Get user error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PATCH /api/users/:id - Update user tags
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth();
+    const db = getDatabase();
+    const { id } = await params;
+
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+
+    if (typeof body.tags !== 'string') {
+      return NextResponse.json(
+        { error: 'tags must be a string' },
+        { status: 400 }
+      );
+    }
+
+    const normalizedTags = body.tags.replace(/\s+/g, ' ').trim();
+    if (normalizedTags.length > 500) {
+      return NextResponse.json(
+        { error: 'tags must be 500 characters or fewer' },
+        { status: 400 }
+      );
+    }
+
+    const user = db.prepare("SELECT user_id FROM users WHERE user_id = ?").get(id);
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE users
+      SET tags = ?, updated_at = ?
+      WHERE user_id = ?
+    `).run(normalizedTags, now, id);
+
+    return NextResponse.json({ success: true, tags: normalizedTags });
+  } catch (error) {
+    console.error('Update user tags error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

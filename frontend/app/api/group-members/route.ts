@@ -156,7 +156,15 @@ export async function GET(request: NextRequest) {
         AND g.company_id = ?
         AND d.company_id = ?
       ORDER BY gm.added_at DESC
-    `).all(userId, session.companyId, session.companyId);
+    `).all(userId, session.companyId, session.companyId) as Array<{
+      group_id: number;
+      department_id: number;
+      user_id: number;
+      schedule: string;
+      added_at: string;
+      group_name: string;
+      department_name: string;
+    }>;
 
     const mapped = assignments.map((row) => ({
       group_id: row.group_id,

@@ -29,6 +29,7 @@ interface UserDetail {
   language_code: string;
   is_bot: boolean;
   group_connections: number[];
+  tags: string;
   created_at: string;
   updated_at: string;
   departments: Department[];

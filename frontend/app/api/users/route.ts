@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
       is_bot: user.is_bot,
       team_role: user.team_role,
       group_connections: parseJSON(user.group_connections, []),
+      tags: user.tags || '',
       created_at: user.created_at,
       updated_at: user.updated_at,
       department_ids: user.department_ids ? user.department_ids.split(',').map(Number) : [],
