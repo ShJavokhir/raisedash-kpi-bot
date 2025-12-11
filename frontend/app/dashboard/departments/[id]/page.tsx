@@ -250,6 +250,44 @@ export default function DepartmentMembersPage() {
       end_time: '19:00',
     }));
 
+  const defaultScheduleTemplate = useMemo(() => {
+    const template = {} as Record<DayName, DaySchedule>;
+    DAY_ORDER.forEach((day) => {
+      template[day] = { day, enabled: true, start_time: '07:00', end_time: '19:00' };
+    });
+    return template;
+  }, []);
+
+  const normalizeScheduleFromAssignment = (source: GroupAssignment['schedule']): DaySchedule[] => {
+    const normalized = new Map<DayName, DaySchedule>();
+
+    if (Array.isArray(source)) {
+      source.forEach((entry) => {
+        const dayKey = (entry.day || '').toString().toLowerCase() as DayName;
+        if (!DAY_ORDER.includes(dayKey)) return;
+
+        const defaults = defaultScheduleTemplate[dayKey];
+        const startMinutes = parseHHMM(entry.start_time);
+        const endMinutes = parseHHMM(entry.end_time);
+        const timesValid = startMinutes !== null && endMinutes !== null && startMinutes !== endMinutes;
+
+        normalized.set(dayKey, {
+          day: dayKey,
+          enabled: Boolean(entry.enabled),
+          start_time: entry.enabled && timesValid ? entry.start_time : defaults.start_time,
+          end_time: entry.enabled && timesValid ? entry.end_time : defaults.end_time,
+        });
+      });
+    }
+
+    return DAY_ORDER.map((day) => {
+      const saved = normalized.get(day);
+      if (saved) return saved;
+      const defaults = defaultScheduleTemplate[day];
+      return { ...defaults, enabled: false };
+    });
+  };
+
   const summarizeSchedule = (entries: DaySchedule[]): string => {
     const enabled = entries.filter((d) => d.enabled);
     if (enabled.length === 0) return 'Disabled';
@@ -504,6 +542,31 @@ export default function DepartmentMembersPage() {
       return searchableText.includes(query);
     });
   }, [usersToAdd, searchQuery]);
+
+  const latestAssignment = useMemo(() => {
+    if (!assignUser) return null;
+    const assignments = groupAssignments[assignUser.user_id] || [];
+    if (assignments.length === 0) return null;
+
+    let newest: GroupAssignment | null = null;
+    let newestTime = -Infinity;
+    assignments.forEach((assignment) => {
+      const ts = Date.parse(assignment.added_at);
+      if (!Number.isNaN(ts) && ts > newestTime) {
+        newest = assignment;
+        newestTime = ts;
+      }
+    });
+
+    return newest || assignments[0];
+  }, [assignUser, groupAssignments]);
+
+  const copyLatestSchedule = () => {
+    if (!latestAssignment) return;
+    const normalizedSchedule = normalizeScheduleFromAssignment(latestAssignment.schedule);
+    setSchedule(normalizedSchedule);
+    setAssignError(null);
+  };
 
   const assignmentList = assignUser ? (groupAssignments[assignUser.user_id] || []) : [];
   const userDepartments = assignUser
@@ -827,9 +890,26 @@ export default function DepartmentMembersPage() {
 
                       {/* Availability */}
                       <div>
-                        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                          3. Availability Schedule
-                        </label>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+                          <label className="block text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                            3. Availability Schedule
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={copyLatestSchedule}
+                              disabled={!latestAssignment || assignLoading}
+                              className="text-[11px] px-3 py-1 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Copy last shift details
+                            </button>
+                            <span className="text-[10px] text-neutral-500">
+                              {latestAssignment
+                                ? `From ${latestAssignment.group_name} • ${latestAssignment.department_name}`
+                                : 'No previous assignment to copy'}
+                            </span>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {schedule.map((day) => (
                             <div key={day.day} className={`p-3 rounded-lg border transition-colors ${day.enabled ? 'border-neutral-300 bg-white' : 'border-neutral-100 bg-neutral-50 opacity-70'}`}>

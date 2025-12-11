@@ -13,16 +13,27 @@ export async function GET(
     const session = await requireAuth();
     const db = getDatabase();
     const { id } = await params;
+    const idNum = Number(id);
 
     const user = db.prepare(`
       SELECT * FROM users WHERE user_id = ?
-    `).get(id) as User;
+    `).get(id) as User & { manager_user_id?: number | null; manager_label?: string | null };
 
     if (!user) {
       return NextResponse.json(
         { error: 'User not found' },
         { status: 404 }
       );
+    }
+
+    // Resolve manager details (if any)
+    let manager: any = null;
+    if (user.manager_user_id) {
+      manager = db.prepare(`
+        SELECT user_id, username, telegram_handle, first_name, last_name
+        FROM users
+        WHERE user_id = ?
+      `).get(user.manager_user_id);
     }
 
     // Get user's departments
@@ -78,6 +89,17 @@ export async function GET(
       is_bot: user.is_bot,
       team_role: user.team_role,
       group_connections: parseJSON(user.group_connections, []),
+      manager_user_id: user.manager_user_id ?? null,
+      manager_label: user.manager_label ?? null,
+      manager: manager
+        ? {
+            user_id: manager.user_id,
+            username: manager.username,
+            telegram_handle: manager.telegram_handle,
+            first_name: manager.first_name,
+            last_name: manager.last_name,
+          }
+        : null,
       tags: user.tags || '',
       created_at: user.created_at,
       updated_at: user.updated_at,
@@ -113,6 +135,7 @@ export async function PATCH(
     await requireAuth();
     const db = getDatabase();
     const { id } = await params;
+    const idNum = Number(id);
 
     let body: any = {};
     try {
@@ -121,22 +144,7 @@ export async function PATCH(
       body = {};
     }
 
-    if (typeof body.tags !== 'string') {
-      return NextResponse.json(
-        { error: 'tags must be a string' },
-        { status: 400 }
-      );
-    }
-
-    const normalizedTags = body.tags.replace(/\s+/g, ' ').trim();
-    if (normalizedTags.length > 500) {
-      return NextResponse.json(
-        { error: 'tags must be 500 characters or fewer' },
-        { status: 400 }
-      );
-    }
-
-    const user = db.prepare("SELECT user_id FROM users WHERE user_id = ?").get(id);
+    const user = db.prepare("SELECT user_id, manager_user_id, manager_label FROM users WHERE user_id = ?").get(id);
     if (!user) {
       return NextResponse.json(
         { error: 'User not found' },
@@ -144,14 +152,151 @@ export async function PATCH(
       );
     }
 
+    const updates: string[] = [];
+    const paramsToSet: any[] = [];
+
+    let normalizedTags: string | null = null;
+
+    // Tags update (optional)
+    if (body.tags !== undefined) {
+      if (typeof body.tags !== 'string') {
+        return NextResponse.json(
+          { error: 'tags must be a string' },
+          { status: 400 }
+        );
+      }
+      normalizedTags = body.tags.replace(/\s+/g, ' ').trim();
+      if (normalizedTags && normalizedTags.length > 500) {
+        return NextResponse.json(
+          { error: 'tags must be 500 characters or fewer' },
+          { status: 400 }
+        );
+      }
+      updates.push('tags = ?');
+      paramsToSet.push(normalizedTags);
+    }
+
+    // Manager update (optional)
+    if (body.manager_user_id !== undefined || body.manager_label !== undefined) {
+      const newManager = body.manager_user_id;
+      const newLabelRaw = body.manager_label;
+
+      // Reject only when both are provided and both are non-null (conflicting intent)
+      if (newManager !== undefined && newLabelRaw !== undefined && newManager !== null && newLabelRaw !== null) {
+        return NextResponse.json(
+          { error: 'Provide only one of manager_user_id or manager_label' },
+          { status: 400 }
+        );
+      }
+
+      if (newManager !== undefined && newManager !== null && typeof newManager !== 'number') {
+        return NextResponse.json(
+          { error: 'manager_user_id must be a number or null' },
+          { status: 400 }
+        );
+      }
+      if (newManager === idNum) {
+        return NextResponse.json(
+          { error: 'User cannot be their own manager' },
+          { status: 400 }
+        );
+      }
+      if (newManager !== undefined && newManager !== null) {
+        const managerRow = db.prepare("SELECT user_id, manager_user_id FROM users WHERE user_id = ?").get(newManager) as { user_id: number; manager_user_id: number | null } | undefined;
+        if (!managerRow) {
+          return NextResponse.json(
+            { error: 'Manager user not found' },
+            { status: 404 }
+          );
+        }
+        // Cycle detection
+        let cursor: number | null = managerRow.manager_user_id;
+        const visited = new Set<number>([idNum]);
+        let depth = 0;
+        while (cursor) {
+          if (visited.has(cursor)) {
+            return NextResponse.json(
+              { error: 'Manager assignment would create a cycle' },
+              { status: 400 }
+            );
+          }
+          visited.add(cursor);
+          const nextRow = db.prepare("SELECT manager_user_id FROM users WHERE user_id = ?").get(cursor) as { manager_user_id: number | null } | undefined;
+          cursor = nextRow?.manager_user_id ?? null;
+          depth += 1;
+          if (depth > 1000) {
+            return NextResponse.json(
+              { error: 'Cycle detection limit exceeded' },
+              { status: 400 }
+            );
+          }
+        }
+      }
+
+      let normalizedLabel: string | null = null;
+      if (newLabelRaw !== undefined) {
+        if (newLabelRaw === null) {
+          normalizedLabel = null;
+        } else if (typeof newLabelRaw !== 'string') {
+          return NextResponse.json(
+            { error: 'manager_label must be a string or null' },
+            { status: 400 }
+          );
+        } else {
+          normalizedLabel = newLabelRaw.trim();
+          if (normalizedLabel.length === 0) {
+            normalizedLabel = null;
+          } else if (normalizedLabel.length > 100) {
+            return NextResponse.json(
+              { error: 'manager_label must be 100 characters or fewer' },
+              { status: 400 }
+            );
+          }
+        }
+      }
+
+      // Apply intent:
+      // - If manager_user_id specified: set it and clear label
+      if (newManager !== undefined) {
+        updates.push('manager_user_id = ?');
+        paramsToSet.push(newManager);
+        updates.push('manager_label = NULL');
+      }
+      // - If label specified (even null): set label; if non-null, clear user manager; if null, leave manager as-is unless above cleared it
+      if (newLabelRaw !== undefined) {
+        updates.push('manager_label = ?');
+        paramsToSet.push(normalizedLabel);
+        if (normalizedLabel !== null) {
+          updates.push('manager_user_id = NULL');
+        }
+      }
+    }
+
+    if (updates.length === 0) {
+      return NextResponse.json({ success: true });
+    }
+
     const now = new Date().toISOString();
+    updates.push('updated_at = ?');
+    paramsToSet.push(now, id);
+
+    const setClause = updates.join(', ');
     db.prepare(`
       UPDATE users
-      SET tags = ?, updated_at = ?
+      SET ${setClause}
       WHERE user_id = ?
-    `).run(normalizedTags, now, id);
+    `).run(...paramsToSet);
 
-    return NextResponse.json({ success: true, tags: normalizedTags });
+    // Return fresh row to avoid stale echoes
+    const updated = db.prepare(`SELECT manager_user_id, manager_label, tags FROM users WHERE user_id = ?`).get(id) as { manager_user_id: number | null; manager_label: string | null; tags: string | null };
+    const tagsValue = updated?.tags ?? normalizedTags ?? (typeof body.tags === 'string' ? body.tags : null);
+
+    return NextResponse.json({
+      success: true,
+      tags: tagsValue,
+      manager_user_id: updated?.manager_user_id ?? null,
+      manager_label: updated?.manager_label ?? null,
+    });
   } catch (error) {
     console.error('Update user tags error:', error);
     return NextResponse.json(

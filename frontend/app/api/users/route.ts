@@ -31,6 +31,8 @@ export async function GET(request: NextRequest) {
       is_bot: user.is_bot,
       team_role: user.team_role,
       group_connections: parseJSON(user.group_connections, []),
+      manager_user_id: user.manager_user_id ?? null,
+      manager_label: user.manager_label ?? null,
       tags: user.tags || '',
       created_at: user.created_at,
       updated_at: user.updated_at,

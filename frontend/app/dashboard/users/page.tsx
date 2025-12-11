@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { User, Search, Filter, X } from 'lucide-react';
 import Link from 'next/link';
 
@@ -13,6 +13,8 @@ interface UserData {
   team_role: string;
   department_ids: number[];
   group_connections: number[];
+  manager_user_id: number | null;
+  manager_label: string | null;
   tags: string;
   created_at: string;
 }
@@ -97,6 +99,14 @@ export default function UsersPage() {
   const [savingTags, setSavingTags] = useState(false);
   const [tagFeedback, setTagFeedback] = useState<string | null>(null);
   const [tagError, setTagError] = useState<string | null>(null);
+  const [managerSearch, setManagerSearch] = useState('');
+  const [managerSelection, setManagerSelection] = useState<number | null>(null);
+  const [managerLabelInput, setManagerLabelInput] = useState('');
+  const [managerMode, setManagerMode] = useState<'none' | 'user' | 'label'>('none');
+  const [savingManager, setSavingManager] = useState(false);
+  const [managerError, setManagerError] = useState<string | null>(null);
+  const [managerFeedback, setManagerFeedback] = useState<string | null>(null);
+  const [showManagerPanel, setShowManagerPanel] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -111,10 +121,26 @@ export default function UsersPage() {
       setTagInput(assignUser.tags || '');
       setTagFeedback(null);
       setTagError(null);
+      setManagerSearch('');
+      setManagerSelection(assignUser.manager_user_id ?? null);
+      setManagerLabelInput(assignUser.manager_label || '');
+      setManagerMode(
+        assignUser.manager_user_id ? 'user' : assignUser.manager_label ? 'label' : 'none'
+      );
+      setManagerFeedback(null);
+      setManagerError(null);
+      setShowManagerPanel(false);
     } else {
       setTagInput('');
       setTagFeedback(null);
       setTagError(null);
+      setManagerSearch('');
+      setManagerSelection(null);
+      setManagerLabelInput('');
+      setManagerMode('none');
+      setManagerFeedback(null);
+      setManagerError(null);
+      setShowManagerPanel(false);
     }
   }, [assignUser]);
 
@@ -131,6 +157,7 @@ export default function UsersPage() {
         const usersData = await usersResponse.json();
         const normalizedUsers = (usersData.users || []).map((user: any) => ({
           ...user,
+          manager_user_id: user.manager_user_id ?? null,
           tags: user.tags || '',
         }));
         setUsers(normalizedUsers);
@@ -214,6 +241,44 @@ export default function UsersPage() {
       end_time: '19:00',
     }));
 
+  const defaultScheduleTemplate = useMemo(() => {
+    const template = {} as Record<DayName, DaySchedule>;
+    DAY_ORDER.forEach((day) => {
+      template[day] = { day, enabled: true, start_time: '07:00', end_time: '19:00' };
+    });
+    return template;
+  }, []);
+
+  const normalizeScheduleFromAssignment = (source: GroupAssignment['schedule']): DaySchedule[] => {
+    const normalized = new Map<DayName, DaySchedule>();
+
+    if (Array.isArray(source)) {
+      source.forEach((entry) => {
+        const dayKey = (entry.day || '').toString().toLowerCase() as DayName;
+        if (!DAY_ORDER.includes(dayKey)) return;
+
+        const defaults = defaultScheduleTemplate[dayKey];
+        const startMinutes = parseHHMM(entry.start_time);
+        const endMinutes = parseHHMM(entry.end_time);
+        const timesValid = startMinutes !== null && endMinutes !== null && startMinutes !== endMinutes;
+
+        normalized.set(dayKey, {
+          day: dayKey,
+          enabled: Boolean(entry.enabled),
+          start_time: entry.enabled && timesValid ? entry.start_time : defaults.start_time,
+          end_time: entry.enabled && timesValid ? entry.end_time : defaults.end_time,
+        });
+      });
+    }
+
+    return DAY_ORDER.map((day) => {
+      const saved = normalized.get(day);
+      if (saved) return saved;
+      const defaults = defaultScheduleTemplate[day];
+      return { ...defaults, enabled: false };
+    });
+  };
+
   const summarizeSchedule = (entries: DaySchedule[]): string => {
     const enabled = entries.filter((d) => d.enabled);
     if (enabled.length === 0) return 'Disabled';
@@ -243,6 +308,75 @@ export default function UsersPage() {
       return `${user.first_name || ''} ${user.last_name || ''}`.trim();
     }
     return user.username || user.telegram_handle || `User ${user.user_id}`;
+  };
+
+  const getManagerLabel = (managerId: number | null, managerLabel?: string | null) => {
+    if (managerLabel) return managerLabel;
+    if (!managerId) return '—';
+    const manager = users.find((u) => u.user_id === managerId);
+    return manager ? getUserDisplayName(manager) : `User ${managerId}`;
+  };
+
+  const HierarchyNode = ({
+    node,
+    isLast,
+    depth,
+  }: {
+    node: ManagerTreeNode;
+    isLast: boolean;
+    depth: number;
+  }) => {
+    const hasChildren = node.children.length > 0;
+    const isLabel = node.user.manager_label === node.user.first_name && node.user.user_id === -1;
+    const displayName = isLabel ? node.user.manager_label || node.user.first_name : getUserDisplayName(node.user);
+    const idLabel = isLabel ? 'Label' : `ID:${node.user.user_id}`;
+    return (
+      <div className="relative">
+        {depth > 0 && (
+          <div
+            className={`absolute left-2 top-0 ${isLast ? 'h-3' : 'h-full'} border-l border-neutral-200`}
+            aria-hidden
+          />
+        )}
+        <div className="relative pl-6">
+          {depth > 0 && (
+            <div className="absolute left-2 top-3 w-4 border-t border-neutral-200" aria-hidden />
+          )}
+          <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-sm">
+            <div className="flex items-center gap-2">
+              <div className={`h-2 w-2 rounded-full ${isLabel ? 'bg-amber-500' : 'bg-neutral-900'}`} />
+              <div>
+                <div className="text-xs font-semibold text-neutral-900">{displayName}</div>
+                <div className="text-[10px] text-neutral-500 font-mono flex items-center gap-1">
+                  <span>{idLabel}</span>
+                  {!isLabel && node.user.username && <span>• @{node.user.username}</span>}
+                </div>
+              </div>
+            </div>
+            {hasChildren && (
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-neutral-50 text-neutral-600 border border-neutral-200">
+                {node.children.length} report{node.children.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+          {hasChildren && (
+            <div className="mt-2 pl-4 relative">
+              <div className="absolute left-1 top-0 bottom-0 border-l border-neutral-100" aria-hidden />
+              <div className="space-y-2">
+                {node.children.map((child, idx) => (
+                  <HierarchyNode
+                    key={`${displayName}-${idx}`}
+                    node={child}
+                    isLast={idx === node.children.length - 1}
+                    depth={depth + 1}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const openTelegramUser = (username: string | null) => {
@@ -470,6 +604,84 @@ export default function UsersPage() {
     }
   };
 
+  const handleSaveManager = async (override?: { mode?: 'none' | 'user' | 'label'; selection?: number | null; label?: string }) => {
+    if (!assignUser) return;
+    setSavingManager(true);
+    setManagerError(null);
+    setManagerFeedback(null);
+
+    try {
+      const effectiveMode = override?.mode ?? managerMode;
+      const effectiveSelection = override?.selection ?? managerSelection;
+      const effectiveLabel = override?.label ?? managerLabelInput;
+      let body: any = {};
+      if (effectiveMode === 'user') {
+        body.manager_user_id = effectiveSelection ?? null;
+        body.manager_label = null;
+        if (effectiveSelection === null) {
+          setSavingManager(false);
+          setManagerError('Select a manager user before saving, or switch to label/none.');
+          return;
+        }
+      } else if (effectiveMode === 'label') {
+        const normalized = (effectiveLabel || '').trim();
+        if (!normalized) {
+          setSavingManager(false);
+          setManagerError('Provide a label name.');
+          return;
+        }
+        body.manager_label = normalized;
+        body.manager_user_id = null;
+      } else {
+        body.manager_user_id = null;
+        body.manager_label = null;
+      }
+
+      const response = await fetch(`/api/users/${assignUser.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setManagerError(data.error || 'Failed to update manager');
+        return;
+      }
+
+      const data = await response.json();
+      setManagerFeedback('Manager updated');
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.user_id === assignUser.user_id
+            ? {
+                ...u,
+                manager_user_id: data.manager_user_id ?? null,
+                manager_label: data.manager_label ?? null,
+              }
+            : u
+        )
+      );
+      setAssignUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              manager_user_id: data.manager_user_id ?? null,
+              manager_label: data.manager_label ?? null,
+            }
+          : prev
+      );
+      setManagerSelection(data.manager_user_id ?? null);
+      setManagerLabelInput(data.manager_label ?? '');
+      setManagerMode(data.manager_label ? 'label' : data.manager_user_id ? 'user' : 'none');
+    } catch (error) {
+      console.error('Error updating manager:', error);
+      setManagerError('Failed to update manager');
+    } finally {
+      setSavingManager(false);
+    }
+  };
+
   const uniqueRoles = Array.from(new Set(users.map(u => u.team_role).filter(Boolean)));
   const activeFilterCount = [
     searchQuery.trim() ? 1 : 0,
@@ -486,6 +698,104 @@ export default function UsersPage() {
       String(group.group_id).includes(groupSearch.trim());
     return group.status === 'active' && matchesSearch;
   });
+  const managerOptions = users
+    .filter((u) => !assignUser || u.user_id !== assignUser.user_id)
+    .filter((u) => {
+      if (!managerSearch.trim()) return true;
+      const query = managerSearch.toLowerCase();
+      const name = `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase();
+      const username = (u.username || '').toLowerCase();
+      const handle = (u.telegram_handle || '').toLowerCase();
+      return name.includes(query) || username.includes(query) || handle.includes(query) || String(u.user_id).includes(query);
+    })
+    .sort((a, b) => (a.first_name || '').localeCompare(b.first_name || ''));
+  const currentManager = assignUser && assignUser.manager_user_id
+    ? users.find((u) => u.user_id === assignUser.manager_user_id)
+    : null;
+  type ManagerTreeNode = { user: UserData; children: ManagerTreeNode[] };
+
+  const latestAssignment = useMemo(() => {
+    if (!assignUser) return null;
+    const assignments = groupAssignments[assignUser.user_id] || [];
+    if (assignments.length === 0) return null;
+
+    let newest: GroupAssignment | null = null;
+    let newestTime = -Infinity;
+    assignments.forEach((assignment) => {
+      const ts = Date.parse(assignment.added_at);
+      if (!Number.isNaN(ts) && ts > newestTime) {
+        newest = assignment;
+        newestTime = ts;
+      }
+    });
+
+    return newest || assignments[0];
+  }, [assignUser, groupAssignments]);
+
+  const copyLatestSchedule = () => {
+    if (!latestAssignment) return;
+    const normalizedSchedule = normalizeScheduleFromAssignment(latestAssignment.schedule);
+    setSchedule(normalizedSchedule);
+    setAssignError(null);
+  };
+
+  const managerForest = useMemo<ManagerTreeNode[]>(() => {
+    const childrenMap = new Map<string, UserData[]>();
+    users.forEach((u) => {
+      if (u.manager_user_id) {
+        const key = `u:${u.manager_user_id}`;
+        if (!childrenMap.has(key)) {
+          childrenMap.set(key, []);
+        }
+        childrenMap.get(key)!.push(u);
+      } else if (u.manager_label) {
+        const key = `l:${u.manager_label.trim()}`;
+        if (!childrenMap.has(key)) {
+          childrenMap.set(key, []);
+        }
+        childrenMap.get(key)!.push(u);
+      }
+    });
+
+    // Sort children for deterministic rendering
+    childrenMap.forEach((list, key) => {
+      list.sort((a, b) => getUserDisplayName(a).localeCompare(getUserDisplayName(b)));
+      childrenMap.set(key, list);
+    });
+
+    const childKeys = new Set<string>();
+    childrenMap.forEach((list, parentKey) => {
+      list.forEach((child) => childKeys.add(`u:${child.user_id}`));
+    });
+
+    const rootKeys = Array.from(childrenMap.keys()).filter((key) => !childKeys.has(key));
+
+    const build = (key: string, visited: Set<string>): ManagerTreeNode | null => {
+      if (visited.has(key)) return null;
+      const nextVisited = new Set(visited);
+      nextVisited.add(key);
+
+      if (key.startsWith('l:')) {
+        const label = key.slice(2);
+        const children = (childrenMap.get(key) || [])
+          .map((child) => build(`u:${child.user_id}`, nextVisited))
+          .filter(Boolean) as ManagerTreeNode[];
+        return { user: { user_id: -1, username: '', first_name: label, last_name: '', telegram_handle: '', team_role: 'Label', department_ids: [], group_connections: [], manager_user_id: null, manager_label: label, tags: '', created_at: '' }, children };
+      }
+
+      const userId = Number(key.slice(2));
+      const user = users.find((u) => u.user_id === userId);
+      if (!user) return null;
+      const children = (childrenMap.get(key) || [])
+        .map((child) => build(`u:${child.user_id}`, nextVisited))
+        .filter(Boolean) as ManagerTreeNode[];
+      return { user, children };
+    };
+
+    return rootKeys
+      .map((rootKey) => build(rootKey, new Set()))
+      .filter(Boolean) as ManagerTreeNode[];
+  }, [users, getUserDisplayName]);
 
   return (
     <div className="space-y-6">
@@ -594,6 +904,26 @@ export default function UsersPage() {
         )}
       </div>
 
+      {/* Manager Hierarchy */}
+      <div className="tech-border bg-white p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 bg-neutral-900 rounded-full"></div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-700">Manager Hierarchy</h3>
+          </div>
+          <span className="text-[10px] text-neutral-500">Roots: {managerForest.length}</span>
+        </div>
+        {managerForest.length === 0 ? (
+          <p className="text-xs text-neutral-500 italic">No hierarchy available.</p>
+        ) : (
+          <div className="space-y-3">
+            {managerForest.map((node, idx) => (
+              <HierarchyNode key={`root-${node.user.user_id}-${idx}`} node={node} isLast={idx === managerForest.length - 1} depth={0} />
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Users Table */}
       <div className="tech-border bg-white overflow-hidden">
         {loading ? (
@@ -629,6 +959,9 @@ export default function UsersPage() {
                   </th>
                   <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Role
+                  </th>
+                  <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
+                    Manager
                   </th>
                   <th className="px-4 py-3 text-left text-[10px] font-medium text-neutral-500 uppercase tracking-wider">
                     Departments
@@ -674,6 +1007,9 @@ export default function UsersPage() {
                       <span className="badge">
                         {user.team_role || 'N/A'}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-600">
+                      {getManagerLabel(user.manager_user_id, user.manager_label)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-neutral-500 font-mono">
                       {user.department_ids.length > 0 ? (
@@ -821,6 +1157,154 @@ export default function UsersPage() {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 {/* Left Column: Form (7/12) */}
                 <div className="lg:col-span-7 space-y-6">
+                  {/* Manager selection */}
+                  <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-neutral-900 rounded-full"></div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900">Manager</h4>
+                      </div>
+                      {managerFeedback && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
+                          Saved
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-neutral-700">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-wider text-neutral-500">Current:</span>
+                        <span className="font-mono text-neutral-800">
+                          {currentManager ? getUserDisplayName(currentManager) : 'No manager'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowManagerPanel((prev) => !prev)}
+                        className="tech-button px-3 py-1 text-[11px]"
+                      >
+                        {showManagerPanel ? 'Close' : 'Manage Manager'}
+                      </button>
+                    </div>
+                    {managerError && (
+                      <div className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                        {managerError}
+                      </div>
+                    )}
+                    {showManagerPanel && (
+                      <div className="space-y-3 border-t border-neutral-100 pt-3">
+                        <p className="text-[10px] text-neutral-500 leading-relaxed">
+                          Choose between a user manager or a label (e.g., GROUP1) for reporting.
+                        </p>
+                        <div className="flex gap-2 flex-wrap text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setManagerMode('user')}
+                            className={`px-3 py-1 rounded-full border ${managerMode === 'user' ? '!bg-neutral-900 !text-white border-neutral-900' : 'border-neutral-200 text-neutral-700'}`}
+                          >
+                            User manager
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setManagerMode('label')}
+                            className={`px-3 py-1 rounded-full border ${managerMode === 'label' ? '!bg-neutral-900 !text-white border-neutral-900' : 'border-neutral-200 text-neutral-700'}`}
+                          >
+                            Label manager
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setManagerMode('none');
+                              setManagerSelection(null);
+                              setManagerLabelInput('');
+                            }}
+                            className={`px-3 py-1 rounded-full border ${managerMode === 'none' ? '!bg-neutral-900 !text-white border-neutral-900' : 'border-neutral-200 text-neutral-700'}`}
+                          >
+                            None
+                          </button>
+                        </div>
+                        <div className="relative">
+                          {managerMode === 'user' ? (
+                            <>
+                              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" strokeWidth={1} />
+                              <input
+                                type="text"
+                                value={managerSearch}
+                                onChange={(e) => setManagerSearch(e.target.value)}
+                                placeholder="Search by name, username, handle or ID..."
+                                className="tech-input w-full pl-10"
+                              />
+                            </>
+                          ) : managerMode === 'label' ? (
+                            <input
+                              type="text"
+                              value={managerLabelInput}
+                              onChange={(e) => setManagerLabelInput(e.target.value)}
+                              placeholder="Label e.g., GROUP1"
+                              className="tech-input w-full"
+                            />
+                          ) : (
+                            <div className="text-[11px] text-neutral-500">No manager will be set.</div>
+                          )}
+                        </div>
+                        {managerMode === 'user' && (
+                          <div className="border border-neutral-200 rounded-lg bg-white h-40 overflow-y-auto custom-scrollbar">
+                            {managerOptions.length === 0 ? (
+                              <div className="p-3 text-[11px] text-neutral-500 text-center">No matching users</div>
+                            ) : (
+                              <div className="divide-y divide-neutral-100">
+                                {managerOptions.map((user) => {
+                                  const selected = managerSelection === user.user_id;
+                                  return (
+                                    <button
+                                      key={user.user_id}
+                                      type="button"
+                                      onClick={() => setManagerSelection(user.user_id)}
+                                      className={`w-full flex items-center justify-between p-3 text-left transition-colors ${
+                                        selected ? 'bg-neutral-900 text-white' : 'hover:bg-neutral-50'
+                                      }`}
+                                      disabled={savingManager}
+                                    >
+                                      <div>
+                                        <div className="text-sm font-semibold">{getUserDisplayName(user)}</div>
+                                        <div className={`text-[10px] font-mono ${selected ? 'text-neutral-200' : 'text-neutral-400'}`}>
+                                          ID: {user.user_id} {user.username ? `• @${user.username}` : ''}
+                                        </div>
+                                      </div>
+                                      {selected && (
+                                        <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded-full uppercase">Selected</span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSaveManager()}
+                            className="tech-button px-3 py-2 text-[11px] !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50"
+                            disabled={savingManager}
+                          >
+                            {savingManager ? 'Saving...' : 'Save Manager'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleSaveManager({ mode: 'none', selection: null, label: '' });
+                            }}
+                            className="tech-button px-3 py-2 text-[11px] bg-neutral-100 text-neutral-700 hover:bg-neutral-200 disabled:opacity-50"
+                            disabled={savingManager}
+                          >
+                            Clear Manager
+                          </button>
+                          <span className="text-[10px] text-neutral-500">Leaves user as a root node.</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <form onSubmit={handleAddGroupAssignment} className="space-y-6">
                     {assignError && (
                       <div className="text-xs text-red-600 bg-red-50 border border-red-200 px-4 py-3 rounded-lg">
@@ -969,9 +1453,26 @@ export default function UsersPage() {
 
                       {/* Availability */}
                       <div>
-                        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-2 font-semibold">
-                          3. Availability Schedule
-                        </label>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+                          <label className="block text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                            3. Availability Schedule
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={copyLatestSchedule}
+                              disabled={!latestAssignment || assignLoading}
+                              className="text-[11px] px-3 py-1 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Copy last shift details
+                            </button>
+                            <span className="text-[10px] text-neutral-500">
+                              {latestAssignment
+                                ? `From ${latestAssignment.group_name} • ${latestAssignment.department_name}`
+                                : 'No previous assignment to copy'}
+                            </span>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {schedule.map((day) => (
                             <div key={day.day} className={`p-3 rounded-lg border transition-colors ${day.enabled ? 'border-neutral-300 bg-white' : 'border-neutral-100 bg-neutral-50 opacity-70'}`}>

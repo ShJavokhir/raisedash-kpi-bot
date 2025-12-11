@@ -567,10 +567,20 @@ class Database:
         ensure_column('users', 'language_code', "TEXT")
         ensure_column('users', 'is_bot', "INTEGER NOT NULL DEFAULT 0")
         ensure_column('users', 'group_connections', "TEXT NOT NULL DEFAULT '[]'")  # JSON array
+        ensure_column('users', 'manager_user_id', "INTEGER")  # Direct manager in hierarchy
+        ensure_column('users', 'manager_label', "TEXT")  # Virtual manager grouping label
         ensure_column('users', 'metadata', "TEXT NOT NULL DEFAULT '{}'")  # JSON blob for audit changes
         ensure_column('users', 'tags', "TEXT NOT NULL DEFAULT ''")
         ensure_column('users', 'created_at', "TEXT")
         ensure_column('users', 'updated_at', "TEXT")
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_manager
+            ON users(manager_user_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_manager_label
+            ON users(manager_label)
+        """)
 
         # Backfill defaults
         cursor.execute("""
@@ -1620,6 +1630,8 @@ class Database:
                     'is_bot': bool(row['is_bot']),
                     'team_role': row['team_role'],
                     'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'manager_user_id': row['manager_user_id'],
+                    'manager_label': row['manager_label'],
                     'tags': row['tags'],
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
@@ -1658,6 +1670,8 @@ class Database:
                     'is_bot': bool(row['is_bot']),
                     'team_role': row['team_role'],
                     'group_connections': json.loads(row['group_connections'] or '[]'),
+                    'manager_user_id': row['manager_user_id'],
+                    'manager_label': row['manager_label'],
                     'tags': row['tags'],
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']

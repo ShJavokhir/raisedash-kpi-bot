@@ -93,6 +93,8 @@ export interface User {
   is_bot: number; // SQLite boolean
   team_role: 'Driver' | 'Dispatcher' | 'OpsManager' | null;
   group_connections: string; // JSON array
+  manager_user_id?: number | null;
+  manager_label?: string | null;
   tags: string | null;
   created_at: string | null;
   updated_at: string | null;
