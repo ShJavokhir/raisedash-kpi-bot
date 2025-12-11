@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { User, Search, Filter, X } from 'lucide-react';
+import { User, Search, Filter, X, RefreshCcw } from 'lucide-react';
 import Link from 'next/link';
 
 interface UserData {
@@ -93,6 +93,11 @@ export default function UsersPage() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [schedule, setSchedule] = useState<DaySchedule[]>([]);
+  const [showBulkScheduleModal, setShowBulkScheduleModal] = useState(false);
+  const [bulkSchedule, setBulkSchedule] = useState<DaySchedule[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
@@ -248,6 +253,26 @@ export default function UsersPage() {
     });
     return template;
   }, []);
+
+  const validateScheduleEntries = (entries: DaySchedule[]): string | null => {
+    const enabledDays = entries.filter((day) => day.enabled);
+    if (enabledDays.length === 0) {
+      return 'Enable at least one day.';
+    }
+
+    for (const day of enabledDays) {
+      const start = parseHHMM(day.start_time);
+      const end = parseHHMM(day.end_time);
+      if (start === null || end === null) {
+        return 'Provide start and end times in HH:MM (00:00-23:59) for all enabled days.';
+      }
+      if (start === end) {
+        return 'Start and end times cannot be identical. Use 00:00-23:59 for 24/7 coverage.';
+      }
+    }
+
+    return null;
+  };
 
   const normalizeScheduleFromAssignment = (source: GroupAssignment['schedule']): DaySchedule[] => {
     const normalized = new Map<DayName, DaySchedule>();
@@ -449,6 +474,11 @@ export default function UsersPage() {
     setSelectedGroupIds([]);
     setSelectedDepartmentId('');
     setSchedule(buildDefaultSchedule());
+    setBulkSchedule(buildDefaultSchedule());
+    setBulkError(null);
+    setBulkFeedback(null);
+    setShowBulkScheduleModal(false);
+    setBulkSaving(false);
     setAssignError(null);
     setShowAssignGroupModal(true);
     fetchGroupAssignments(user.user_id);
@@ -462,6 +492,11 @@ export default function UsersPage() {
     setSelectedGroupIds([]);
     setSelectedDepartmentId('');
     setSchedule(buildDefaultSchedule());
+    setBulkSchedule(buildDefaultSchedule());
+    setBulkError(null);
+    setBulkFeedback(null);
+    setShowBulkScheduleModal(false);
+    setBulkSaving(false);
     setTagInput('');
     setTagFeedback(null);
     setTagError(null);
@@ -479,23 +514,10 @@ export default function UsersPage() {
     e.preventDefault();
     if (!assignUser || selectedGroupIds.length === 0 || !selectedDepartmentId) return;
 
-    const enabledDays = schedule.filter((day) => day.enabled);
-    if (enabledDays.length === 0) {
-      setAssignError('Enable at least one day.');
+    const scheduleValidation = validateScheduleEntries(schedule);
+    if (scheduleValidation) {
+      setAssignError(scheduleValidation);
       return;
-    }
-
-    for (const day of enabledDays) {
-      const start = parseHHMM(day.start_time);
-      const end = parseHHMM(day.end_time);
-      if (start === null || end === null) {
-        setAssignError('Provide start and end times in HH:MM (00:00-23:59) for all enabled days.');
-        return;
-      }
-      if (start === end) {
-        setAssignError('Start and end times cannot be identical. Use 00:00-23:59 for 24/7 coverage.');
-        return;
-      }
     }
 
     setSavingAssignment(true);
@@ -737,6 +759,90 @@ export default function UsersPage() {
     const normalizedSchedule = normalizeScheduleFromAssignment(latestAssignment.schedule);
     setSchedule(normalizedSchedule);
     setAssignError(null);
+  };
+
+  const toggleBulkDay = (day: DayName) => {
+    setBulkSchedule((prev) =>
+      prev.map((entry) =>
+        entry.day === day ? { ...entry, enabled: !entry.enabled } : entry
+      )
+    );
+  };
+
+  const updateBulkDayTime = (day: DayName, field: 'start_time' | 'end_time', value: string) => {
+    setBulkSchedule((prev) =>
+      prev.map((entry) =>
+        entry.day === day ? { ...entry, [field]: value } : entry
+      )
+    );
+  };
+
+  const openBulkScheduleModal = () => {
+    if (!assignUser) return;
+    const seed = latestAssignment
+      ? normalizeScheduleFromAssignment(latestAssignment.schedule)
+      : buildDefaultSchedule();
+    setBulkSchedule(seed);
+    setBulkError(null);
+    setBulkFeedback(null);
+    setShowBulkScheduleModal(true);
+  };
+
+  const closeBulkScheduleModal = () => {
+    setShowBulkScheduleModal(false);
+    setBulkError(null);
+    setBulkFeedback(null);
+  };
+
+  const copyBulkScheduleFromLatest = () => {
+    if (!latestAssignment) return;
+    const normalized = normalizeScheduleFromAssignment(latestAssignment.schedule);
+    setBulkSchedule(normalized);
+    setBulkError(null);
+  };
+
+  const handleBulkScheduleSave = async () => {
+    if (!assignUser) return;
+
+    const validation = validateScheduleEntries(bulkSchedule);
+    if (validation) {
+      setBulkError(validation);
+      return;
+    }
+
+    setBulkSaving(true);
+    setBulkError(null);
+    setBulkFeedback(null);
+
+    try {
+      const response = await fetch('/api/group-members', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: assignUser.user_id,
+          schedule: bulkSchedule,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update shifts');
+      }
+
+      setBulkFeedback(
+        typeof data.updated === 'number'
+          ? `Updated ${data.updated} assignment${data.updated === 1 ? '' : 's'}`
+          : 'Shifts updated'
+      );
+      // Keep the main form in sync with the newly applied schedule.
+      setSchedule(bulkSchedule);
+      await fetchGroupAssignments(assignUser.user_id);
+    } catch (error: any) {
+      console.error('Error updating all shifts:', error);
+      setBulkError(error?.message || 'Failed to update shifts');
+    } finally {
+      setBulkSaving(false);
+    }
   };
 
   const managerForest = useMemo<ManagerTreeNode[]>(() => {
@@ -1466,11 +1572,7 @@ export default function UsersPage() {
                             >
                               Copy last shift details
                             </button>
-                            <span className="text-[10px] text-neutral-500">
-                              {latestAssignment
-                                ? `From ${latestAssignment.group_name} • ${latestAssignment.department_name}`
-                                : 'No previous assignment to copy'}
-                            </span>
+                            
                           </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1541,9 +1643,20 @@ export default function UsersPage() {
 
                 {/* Right Column: Existing Assignments (5/12) */}
                 <div className="lg:col-span-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                     <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-500">Active Assignments</h4>
-                     <span className="text-[10px] px-2 py-0.5 bg-neutral-100 rounded-full text-neutral-600 font-mono">{assignmentList.length}</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-500">Active Assignments</h4>
+                      <span className="text-[10px] px-2 py-0.5 bg-neutral-100 rounded-full text-neutral-600 font-mono">{assignmentList.length}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openBulkScheduleModal}
+                      disabled={assignmentList.length === 0 || assignLoading || !assignUser}
+                      className="flex items-center gap-2 text-[11px] px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <RefreshCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                      Update all shifts
+                    </button>
                   </div>
                   
                   {assignLoading ? (
@@ -1592,6 +1705,140 @@ export default function UsersPage() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Shift Update Modal */}
+      {showBulkScheduleModal && assignUser && (
+        <div
+          className="fixed inset-0 bg-ink/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
+          onClick={closeBulkScheduleModal}
+        >
+          <div
+            className="tech-card tech-border bg-white w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl rounded-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-white">
+              <div>
+                <h3 className="text-sm font-bold tracking-tight text-neutral-900">
+                  Update shifts for all assignments
+                </h3>
+                <p className="text-[10px] text-neutral-500 font-medium">
+                  {getUserDisplayName(assignUser)} • {assignmentList.length} assignment{assignmentList.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <button
+                onClick={closeBulkScheduleModal}
+                className="p-2 hover:bg-neutral-100 rounded-full transition-colors text-neutral-500 hover:text-neutral-900"
+                aria-label="Close bulk modal"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto max-h-[80vh] bg-neutral-50/30">
+              {bulkError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-200 px-4 py-3 rounded-lg">
+                  {bulkError}
+                </div>
+              )}
+              {bulkFeedback && (
+                <div className="text-xs text-green-700 bg-green-50 border border-green-200 px-4 py-3 rounded-lg">
+                  {bulkFeedback}
+                </div>
+              )}
+
+              <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-neutral-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-neutral-900 rounded-full"></div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+                        Availability Schedule
+                      </h4>
+                    </div>
+                    <p className="text-[10px] text-neutral-500 leading-relaxed mt-1">
+                      Applies to all current group assignments for this user.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={copyBulkScheduleFromLatest}
+                      disabled={!latestAssignment}
+                      className="text-[11px] px-3 py-1 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Copy last shift
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkSchedule(buildDefaultSchedule())}
+                      className="text-[11px] px-3 py-1 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {bulkSchedule.map((day) => (
+                    <div key={day.day} className={`p-3 rounded-lg border transition-colors ${day.enabled ? 'border-neutral-300 bg-white' : 'border-neutral-100 bg-neutral-50 opacity-70'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={day.enabled}
+                            onChange={() => toggleBulkDay(day.day)}
+                            className="rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                          />
+                          <span className="text-xs font-bold uppercase tracking-wider">{DAY_LABEL[day.day]}</span>
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={day.start_time}
+                          onChange={(e) => updateBulkDayTime(day.day, 'start_time', e.target.value)}
+                          className="block w-full text-xs border-neutral-300 rounded focus:border-neutral-900 focus:ring-neutral-900 bg-transparent disabled:cursor-not-allowed"
+                          disabled={!day.enabled}
+                        />
+                        <span className="text-neutral-400 text-xs">to</span>
+                        <input
+                          type="time"
+                          value={day.end_time}
+                          onChange={(e) => updateBulkDayTime(day.day, 'end_time', e.target.value)}
+                          className="block w-full text-xs border-neutral-300 rounded focus:border-neutral-900 focus:ring-neutral-900 bg-transparent disabled:cursor-not-allowed"
+                          disabled={!day.enabled}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-neutral-400 mt-2 italic">
+                  This will overwrite the schedule on all active assignments for this user. Times are in server time.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-100 bg-white flex items-center justify-end gap-3">
+              <button
+                type="button"
+                className="px-4 py-2 text-sm text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
+                onClick={closeBulkScheduleModal}
+                disabled={bulkSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkScheduleSave}
+                className="tech-button !bg-neutral-900 !text-white hover:!bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                disabled={bulkSaving}
+              >
+                {bulkSaving ? 'Updating shifts...' : 'Apply to all assignments'}
+              </button>
             </div>
           </div>
         </div>

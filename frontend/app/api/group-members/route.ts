@@ -295,6 +295,83 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * PATCH /api/group-members
+ * Body: { user_id, schedule: [{ day, enabled, start_time, end_time }] }
+ * Updates schedule for all assignments of the user within the company.
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const session = await requireAuth();
+    const db = getDatabase();
+    const body = await request.json();
+
+    const userId = body.user_id;
+    const schedule = normalizeSchedule(body.schedule);
+
+    if (!userId || !schedule) {
+      return NextResponse.json(
+        { error: 'user_id and schedule (7-day entries) are required' },
+        { status: 400 }
+      );
+    }
+
+    if (!schedule.some((s) => s.enabled)) {
+      return NextResponse.json(
+        { error: 'At least one day must be enabled in the schedule' },
+        { status: 400 }
+      );
+    }
+
+    // Ensure the user exists
+    const user = db.prepare(`
+      SELECT user_id FROM users WHERE user_id = ?
+    `).get(userId);
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Ensure the user has assignments scoped to the company
+    const assignmentCountRow = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM group_members gm
+      JOIN groups g ON gm.group_id = g.group_id
+      JOIN departments d ON gm.department_id = d.department_id
+      WHERE gm.user_id = ?
+        AND g.company_id = ?
+        AND d.company_id = ?
+    `).get(userId, session.companyId, session.companyId) as { count: number };
+
+    if (!assignmentCountRow || assignmentCountRow.count === 0) {
+      return NextResponse.json(
+        { error: 'No assignments found for this user in your company' },
+        { status: 404 }
+      );
+    }
+
+    const serialized = serializeSchedule(schedule);
+    const update = db.prepare(`
+      UPDATE group_members
+      SET schedule = ?
+      WHERE user_id = ?
+        AND group_id IN (SELECT group_id FROM groups WHERE company_id = ?)
+        AND department_id IN (SELECT department_id FROM departments WHERE company_id = ?)
+    `).run(serialized, userId, session.companyId, session.companyId);
+
+    return NextResponse.json({ success: true, updated: update.changes });
+  } catch (error) {
+    console.error('Patch group members error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * DELETE /api/group-members?user_id=1&group_id=2&department_id=3
  */
 export async function DELETE(request: NextRequest) {
